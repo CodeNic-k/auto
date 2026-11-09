@@ -53,7 +53,16 @@ TRACKING_PREFIXES = ("utm_", "fbclid", "gclid", "dclid", "yclid", "mc_cid", "mc_
 
 
 class RateLimited(Exception):
-    """Raised when Gemini returns HTTP 429 so this run can stop cleanly."""
+    """Raised when every configured Gemini model/key combination is rate limited."""
+
+
+def split_env_list(name, fallback_name=None):
+    """Read a comma- or newline-separated Actions variable/secret."""
+    raw = os.getenv(name, "")
+    if not raw and fallback_name:
+        raw = os.getenv(fallback_name, "")
+    return list(dict.fromkeys(item.strip() for item in re.split(r"[,\r\n]+", raw)
+                              if item.strip()))
 
 
 def required_env(name):
@@ -296,24 +305,37 @@ def normalize_url(raw_url):
     return cleaned, parts.hostname.lower()
 
 
-def gemini_call(client, model, video_id, *, notes_only=False):
+def gemini_call(clients, models, video_id, *, notes_only=False):
     video_url = f"https://www.youtube.com/watch?v={video_id}"
     prompt = NOTES_PROMPT if notes_only else PROMPT
-    try:
-        response = client.models.generate_content(
-            model=model,
-            contents=[
-                types.Part(file_data=types.FileData(file_uri=video_url)),
-                types.Part(text=prompt),
-            ],
-            config=types.GenerateContentConfig(temperature=0),
-        )
-        return parse_gemini_json(get_response_text(response))
-    except Exception as exc:
-        status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
-        if status == 429 or "429" in str(exc) or "RESOURCE_EXHAUSTED" in str(exc):
-            raise RateLimited(str(exc)) from exc
-        raise
+    errors = []
+    for model in models:
+        for client_index, client in enumerate(clients, start=1):
+            try:
+                response = client.models.generate_content(
+                    model=model,
+                    contents=[
+                        types.Part(file_data=types.FileData(file_uri=video_url)),
+                        types.Part(text=prompt),
+                    ],
+                    config=types.GenerateContentConfig(temperature=0),
+                )
+                return parse_gemini_json(get_response_text(response))
+            except Exception as exc:
+                status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+                message = str(exc)
+                is_rate_limit = (str(status) == "429" or "429" in message
+                                 or "RESOURCE_EXHAUSTED" in message)
+                errors.append((model, client_index, is_rate_limit, message[:500]))
+                print(f"Gemini model {model} with key slot {client_index} failed; trying fallback: {message[:300]}")
+
+    if errors and all(item[2] for item in errors):
+        raise RateLimited("All configured model/key combinations were rate limited")
+    summary = "; ".join(
+        f"{model} (key slot {key_index}): {message}"
+        for model, key_index, _, message in errors
+    )
+    raise RuntimeError(f"All configured Gemini fallbacks failed: {summary}")
 
 
 def save_links(video_id, results):
@@ -385,14 +407,18 @@ def mark_notes_failed(video_id, error):
 
 def main():
     youtube_key = required_env("YOUTUBE_API_KEY")
-    gemini_key = required_env("GEMINI_API_KEY")
-    model = required_env("GEMINI_MODEL")
+    gemini_keys = split_env_list("GEMINI_API_KEYS", "GEMINI_API_KEY")
+    if not gemini_keys:
+        raise RuntimeError("Missing required environment variable: GEMINI_API_KEYS (or GEMINI_API_KEY)")
+    models = split_env_list("GEMINI_MODELS", "GEMINI_MODEL")
+    if not models:
+        raise RuntimeError("Missing required environment variable: GEMINI_MODELS (or GEMINI_MODEL)")
     # Check Supabase secrets before spending API quota.
     required_env("SUPABASE_URL")
     required_env("SUPABASE_SERVICE_KEY")
 
     youtube = build("youtube", "v3", developerKey=youtube_key, cache_discovery=False)
-    gemini = genai.Client(api_key=gemini_key)
+    gemini_clients = [genai.Client(api_key=key) for key in gemini_keys]
     discovered_count = 0
     channel_errors = 0
     handles = read_handles()
@@ -430,7 +456,7 @@ def main():
         video_id = video["video_id"]
         prepare_gemini_call()
         try:
-            result = gemini_call(gemini, model, video_id)
+            result = gemini_call(gemini_clients, models, video_id)
         except RateLimited as exc:
             print(f"Gemini rate limit reached; stopping cleanly. {exc}")
             rate_limited = True
@@ -477,7 +503,7 @@ def main():
             video_id = video["video_id"]
             prepare_gemini_call()
             try:
-                result = gemini_call(gemini, model, video_id, notes_only=True)
+                result = gemini_call(gemini_clients, models, video_id, notes_only=True)
             except RateLimited as exc:
                 print(f"Gemini rate limit reached; stopping cleanly. {exc}")
                 rate_limited = True
