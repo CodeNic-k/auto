@@ -4,6 +4,17 @@ on:
   schedule:
     - cron: "0 */6 * * *"
   workflow_dispatch:
+    inputs:
+      discovery_limit:
+        description: "Videos to scan per channel (0 means all; use 3 for the first trial)"
+        required: false
+        type: number
+        default: 0
+      batch_size:
+        description: "Pending Shorts to send to Gemini (use 3 for the first trial)"
+        required: false
+        type: number
+        default: 20
 
 permissions:
   contents: read
@@ -32,4 +43,5 @@ jobs:
           GEMINI_MODEL: ${{ secrets.GEMINI_MODEL }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          BATCH_SIZE: "20"
+          DISCOVERY_LIMIT: ${{ github.event.inputs.discovery_limit || '0' }}
+          BATCH_SIZE: ${{ github.event.inputs.batch_size || '20' }}

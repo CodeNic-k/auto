@@ -107,15 +107,20 @@ def upsert_channel(handle, channel_id, playlist_id):
     )
 
 
-def discover_playlist(youtube, handle, playlist_id):
+def discover_playlist(youtube, handle, playlist_id, max_videos=0):
     """Page through a channel's entire uploads playlist; add unseen videos."""
     page_token = None
     discovered = 0
+    scanned = 0
     while True:
+        page_size = 50 if not max_videos else min(50, max_videos - scanned)
+        if page_size <= 0:
+            break
         result = youtube_call(youtube.playlistItems().list(
             part="snippet,contentDetails", playlistId=playlist_id,
-            maxResults=50, pageToken=page_token,
+            maxResults=page_size, pageToken=page_token,
         ))
+        scanned += len(result.get("items", []))
         rows = []
         for item in result.get("items", []):
             video_id = item.get("contentDetails", {}).get("videoId")
@@ -132,7 +137,7 @@ def discover_playlist(youtube, handle, playlist_id):
             )
             discovered += len(rows)
         page_token = result.get("nextPageToken")
-        if not page_token:
+        if not page_token or (max_videos and scanned >= max_videos):
             break
     return discovered
 
@@ -303,12 +308,17 @@ def main():
     discovered_count = 0
     channel_errors = 0
     handles = read_handles()
+    discovery_limit = int(os.getenv("DISCOVERY_LIMIT", "0"))
+    if discovery_limit < 0:
+        raise ValueError("DISCOVERY_LIMIT must be 0 (no limit) or a positive number")
 
     for handle in handles:
         try:
             channel_id, playlist_id = channel_details(youtube, handle)
             upsert_channel(handle, channel_id, playlist_id)
-            discovered_count += discover_playlist(youtube, handle, playlist_id)
+            discovered_count += discover_playlist(
+                youtube, handle, playlist_id, max_videos=discovery_limit
+            )
             fill_durations(youtube, handle)
         except Exception as exc:
             channel_errors += 1
