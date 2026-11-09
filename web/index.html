@@ -6,177 +6,97 @@
   <meta name="theme-color" content="#f6f7fb">
   <title>Websites from YouTube Shorts</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="./config.js"></script>
   <style>
-    :root {
-      color-scheme: light;
-      --ink: #20243a;
-      --muted: #67708a;
-      --line: #e3e7f0;
-      --brand: #5548d9;
-      --surface: #fff;
-      --background: #f6f7fb;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      background: var(--background);
-      color: var(--ink);
-      font: 16px/1.5 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-    }
-    main { width: min(100% - 32px, 920px); margin: 0 auto; padding: 48px 0 72px; }
-    header { margin-bottom: 28px; }
-    .eyebrow { color: var(--brand); font-size: .8rem; font-weight: 750; letter-spacing: .1em; text-transform: uppercase; }
-    h1 { margin: 8px 0; font-size: clamp(2rem, 6vw, 3.1rem); line-height: 1.08; letter-spacing: -.04em; }
-    .intro { margin: 0; max-width: 650px; color: var(--muted); }
-    .controls {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) minmax(190px, 230px);
-      gap: 12px;
-      margin: 24px 0 12px;
-    }
-    input, select {
-      width: 100%; min-height: 48px; padding: 10px 13px; border: 1px solid var(--line);
-      border-radius: 12px; background: var(--surface); color: var(--ink); font: inherit;
-    }
-    input:focus, select:focus { outline: 3px solid #5548d933; border-color: var(--brand); }
-    .result-count { min-height: 24px; margin: 0 2px 12px; color: var(--muted); font-size: .92rem; }
-    #results { display: grid; gap: 12px; }
-    .card { padding: 20px; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: 0 3px 14px #20243a08; }
-    .card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-    .url { overflow-wrap: anywhere; color: var(--brand); font-size: 1.08rem; font-weight: 700; text-decoration: none; }
-    .url:hover, .source:hover { text-decoration: underline; }
-    .category { flex: 0 0 auto; padding: 4px 9px; border-radius: 99px; background: #f0efff; color: #4438bd; font-size: .76rem; font-weight: 700; }
-    .description { margin: 12px 0; color: #4e566e; }
-    .source { color: var(--muted); font-size: .9rem; text-decoration: none; }
-    .message { padding: 28px 18px; border: 1px dashed #cbd1df; border-radius: 16px; color: var(--muted); text-align: center; }
-    .error { border-color: #f0b7b7; color: #9b2424; background: #fff8f8; }
-    @media (max-width: 620px) {
-      main { padding-top: 32px; }
-      .controls { grid-template-columns: 1fr; }
-      .card-top { flex-direction: column; }
-    }
+    :root { color-scheme:light; --ink:#20243a; --muted:#67708a; --line:#e3e7f0; --brand:#5548d9; --surface:#fff; --bg:#f6f7fb; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink); font:16px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    main { width:min(100% - 32px,960px); margin:auto; padding:32px 0 72px; }
+    nav { display:flex; gap:10px; margin-bottom:28px; }
+    nav a { padding:8px 13px; border-radius:10px; color:var(--muted); text-decoration:none; font-weight:650; }
+    nav a.active, nav a:hover { background:#eae8ff; color:#4438bd; }
+    .eyebrow { color:var(--brand); font-size:.8rem; font-weight:750; letter-spacing:.1em; text-transform:uppercase; }
+    h1 { margin:8px 0; font-size:clamp(2rem,6vw,3.1rem); line-height:1.08; letter-spacing:-.04em; }
+    h2 { margin:28px 0 12px; font-size:1.2rem; }
+    .intro { margin:0; max-width:680px; color:var(--muted); }
+    .controls { display:grid; grid-template-columns:minmax(0,1fr) minmax(190px,230px); gap:12px; margin:22px 0 10px; }
+    input,select { width:100%; min-height:48px; padding:10px 13px; border:1px solid var(--line); border-radius:12px; background:white; color:var(--ink); font:inherit; }
+    input:focus,select:focus { outline:3px solid #5548d933; border-color:var(--brand); }
+    .count { margin:0 2px 12px; color:var(--muted); font-size:.92rem; }
+    .category-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; }
+    .category-card { display:block; padding:14px; border:1px solid var(--line); border-radius:14px; background:white; color:var(--ink); text-decoration:none; transition:transform .15s,border-color .15s; }
+    .category-card:hover { transform:translateY(-2px); border-color:#aaa4f5; }
+    .category-card strong { display:block; }
+    .category-card small { color:var(--muted); }
+    #results { display:grid; gap:12px; }
+    .card,.message { padding:19px; border:1px solid var(--line); border-radius:16px; background:white; box-shadow:0 3px 14px #20243a08; }
+    .card-top { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+    .url { overflow-wrap:anywhere; color:var(--brand); font-size:1.08rem; font-weight:700; text-decoration:none; }
+    .url:hover,.source:hover { text-decoration:underline; }
+    .badge { flex:0 0 auto; padding:4px 9px; border-radius:99px; background:#f0efff; color:#4438bd; font-size:.76rem; font-weight:700; }
+    .detail { margin:12px 0; color:#4e566e; }
+    .source { color:var(--muted); font-size:.9rem; text-decoration:none; }
+    .message { border-style:dashed; color:var(--muted); text-align:center; }
+    @media(max-width:620px) { .controls { grid-template-columns:1fr; } .card-top { flex-direction:column; } }
   </style>
 </head>
 <body>
   <main>
+    <nav aria-label="Main navigation"><a class="active" href="./index.html">Websites</a><a href="./notes.html">Notes &amp; tips</a></nav>
     <header>
       <div class="eyebrow">A collection of useful finds</div>
       <h1>Websites from Shorts</h1>
-      <p class="intro">Explore websites spotted or mentioned in YouTube Shorts. Search by name, description, or domain, or filter by category.</p>
+      <p class="intro">Browse websites spotted or mentioned in YouTube Shorts. Search by domain or description, or open a category below.</p>
     </header>
-
-    <section aria-label="Search and filter links">
+    <section aria-labelledby="categories-heading">
+      <h2 id="categories-heading">Website categories</h2>
+      <div class="category-grid" id="category-cards"><div class="message">Loading categories…</div></div>
+    </section>
+    <section aria-label="Search and filter websites">
       <div class="controls">
         <input id="search" type="search" placeholder="Search websites…" aria-label="Search websites">
-        <select id="category" aria-label="Filter by category">
-          <option value="">All categories</option>
-        </select>
+        <select id="category" aria-label="Filter by category"><option value="">All categories</option></select>
       </div>
-      <p class="result-count" id="count" aria-live="polite">Loading websites…</p>
+      <p class="count" id="count" aria-live="polite">Loading websites…</p>
       <div id="results" aria-live="polite"></div>
     </section>
   </main>
-
   <script>
-    // Replace these two example strings with the public URL and anon/publishable key
-    // from your Supabase project. Never put the service key in this web page.
-    const SUPABASE_URL = "https://qbnmjxjiffftacdktnny.supabase.co";
-    const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFibm1qeGppZmZmdGFjZGt0bm55Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTMxNTg2MDgsImV4cCI6MjEwODczNDYwOH0.BBmWy2-LbyZOOGT83iMW9LSyjfyh4Um_wVDWEQrToyY";
-
-    const resultsElement = document.getElementById("results");
-    const countElement = document.getElementById("count");
-    const searchInput = document.getElementById("search");
-    const categorySelect = document.getElementById("category");
-    let allLinks = [];
-
-    function addText(parent, tag, text, className) {
-      const element = document.createElement(tag);
-      if (className) element.className = className;
-      element.textContent = text;
-      parent.appendChild(element);
-      return element;
-    }
-
-    function render() {
-      const term = searchInput.value.trim().toLowerCase();
-      const category = categorySelect.value;
-      const filtered = allLinks.filter((link) => {
-        const searchable = [link.url, link.domain, link.description, link.category].join(" ").toLowerCase();
-        return (!term || searchable.includes(term)) && (!category || link.category === category);
-      });
-
-      resultsElement.replaceChildren();
-      countElement.textContent = `${filtered.length} ${filtered.length === 1 ? "website" : "websites"}`;
-      if (filtered.length === 0) {
-        addText(resultsElement, "div", allLinks.length ? "No websites match your search." : "No links have been collected yet.", "message");
-        return;
-      }
-
-      for (const link of filtered) {
-        const card = document.createElement("article");
-        card.className = "card";
-        const top = document.createElement("div");
-        top.className = "card-top";
-        const website = addText(top, "a", link.domain || link.url, "url");
-        website.href = link.url;
-        website.target = "_blank";
-        website.rel = "noopener noreferrer";
-        addText(top, "span", link.category || "Other", "category");
-        card.appendChild(top);
-        addText(card, "p", link.description || "No description provided.", "description");
-
-        const source = addText(card, "a", "Watch source video ↗", "source");
-        source.href = `https://www.youtube.com/watch?v=${encodeURIComponent(link.video_id)}`;
-        source.target = "_blank";
-        source.rel = "noopener noreferrer";
-        resultsElement.appendChild(card);
+    const descriptions = {
+      "AI tools":"Artificial intelligence websites and apps", "Productivity":"Tools for getting work done",
+      "Design":"Visual design and creative tools", "Dev tools":"Software development tools",
+      "Privacy/Security":"Privacy, safety, and security tools", "Free resources":"Free downloads and useful resources",
+      "Learning":"Courses, explainers, and learning tools", "Entertainment":"Games and entertainment", "Other":"Other useful websites"
+    };
+    const resultsEl=document.getElementById("results"), countEl=document.getElementById("count");
+    const searchEl=document.getElementById("search"), filterEl=document.getElementById("category");
+    const categoryCards=document.getElementById("category-cards"); let rows=[];
+    function text(parent,tag,value,className){const el=document.createElement(tag);el.textContent=value;if(className)el.className=className;parent.appendChild(el);return el;}
+    function render(){
+      const term=searchEl.value.trim().toLowerCase(),cat=filterEl.value;
+      const shown=rows.filter(x=>(!cat||x.category===cat)&&(!term||[x.url,x.domain,x.description,x.category].join(" ").toLowerCase().includes(term)));
+      resultsEl.replaceChildren();countEl.textContent=`${shown.length} ${shown.length===1?"website":"websites"}`;
+      if(!shown.length){text(resultsEl,"div",rows.length?"No websites match your search.":"No website links have been collected yet.","message");return;}
+      for(const item of shown){const card=document.createElement("article");card.className="card";const top=document.createElement("div");top.className="card-top";
+        const a=text(top,"a",item.domain||item.url,"url");a.href=item.url;a.target="_blank";a.rel="noopener noreferrer";
+        text(top,"span",item.category||"Other","badge");card.appendChild(top);
+        text(card,"p",item.description||"No description provided.","detail");
+        const source=text(card,"a","Watch source video ↗","source");source.href=`https://www.youtube.com/watch?v=${encodeURIComponent(item.video_id)}`;source.target="_blank";source.rel="noopener noreferrer";resultsEl.appendChild(card);
       }
     }
-
-    async function loadLinks() {
-      if (SUPABASE_URL.includes("YOUR_PROJECT_ID") || SUPABASE_ANON_KEY.includes("YOUR_SUPABASE")) {
-        countElement.textContent = "Add your Supabase URL and public key in web/index.html to connect the page.";
-        resultsElement.replaceChildren();
-        return;
-      }
-      if (!window.supabase) {
-        countElement.textContent = "Could not load the Supabase library. Check your internet connection and reload.";
-        return;
-      }
-
-      const client = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-      try {
-        // Supabase returns at most 1,000 rows by default, so fetch in pages.
-        const pageSize = 1000;
-        for (let start = 0; ; start += pageSize) {
-          const { data, error } = await client
-            .from("links")
-            .select("id, video_id, url, domain, description, category, created_at")
-            .order("created_at", { ascending: false })
-            .range(start, start + pageSize - 1);
-          if (error) throw error;
-          allLinks.push(...data);
-          if (data.length < pageSize) break;
-        }
-
-        const categories = [...new Set(allLinks.map((link) => link.category).filter(Boolean))].sort();
-        for (const value of categories) {
-          const option = document.createElement("option");
-          option.value = value;
-          option.textContent = value;
-          categorySelect.appendChild(option);
-        }
-        render();
-      } catch (error) {
-        console.error("Could not load links from Supabase:", error);
-        countElement.textContent = "Could not load websites. Check the Supabase URL, public key, table permissions, and RLS policy.";
-        resultsElement.replaceChildren();
-      }
+    async function load(){
+      if(!window.supabase||!window.APP_SUPABASE_URL||!window.APP_SUPABASE_PUBLIC_KEY){countEl.textContent="Supabase configuration is missing.";return;}
+      try{
+        const db=window.supabase.createClient(window.APP_SUPABASE_URL,window.APP_SUPABASE_PUBLIC_KEY),size=1000;
+        for(let from=0;;from+=size){const {data,error}=await db.from("links").select("id,video_id,url,domain,description,category,created_at").order("created_at",{ascending:false}).range(from,from+size-1);if(error)throw error;rows.push(...data);if(data.length<size)break;}
+        const counts=new Map();for(const item of rows){const c=item.category||"Other";counts.set(c,(counts.get(c)||0)+1);}
+        categoryCards.replaceChildren();filterEl.replaceChildren();const all=document.createElement("option");all.value="";all.textContent="All categories";filterEl.appendChild(all);
+        for(const [name,n] of [...counts].sort((a,b)=>a[0].localeCompare(b[0]))){const option=document.createElement("option");option.value=name;option.textContent=name;filterEl.appendChild(option);
+          const box=document.createElement("a");box.className="category-card";box.href=`./category.html?type=websites&category=${encodeURIComponent(name)}`;text(box,"strong",name);text(box,"small",`${n} ${n===1?"website":"websites"} · ${descriptions[name]||"Browse this category"}`);categoryCards.appendChild(box);}
+        if(!counts.size)text(categoryCards,"div","Categories will appear after website links are collected.","message");render();
+      }catch(error){console.error(error);countEl.textContent="Could not load websites. Check the Supabase URL, public key, table grants, and RLS policy.";categoryCards.replaceChildren();resultsEl.replaceChildren();text(resultsEl,"div","Supabase could not return the links table.","message");}
     }
-
-    searchInput.addEventListener("input", render);
-    categorySelect.addEventListener("change", render);
-    loadLinks();
+    searchEl.addEventListener("input",render);filterEl.addEventListener("change",render);load();
   </script>
 </body>
 </html>

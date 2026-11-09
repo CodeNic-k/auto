@@ -11,7 +11,7 @@ on:
         type: number
         default: 0
       batch_size:
-        description: "Pending Shorts to send to Gemini (use 3 for the first trial)"
+        description: "Gemini video calls per run (new links+notes, then notes backfill; use 3 for a small run)"
         required: false
         type: number
         default: 20
