@@ -338,6 +338,67 @@ def gemini_call(clients, models, video_id, *, notes_only=False):
     raise RuntimeError(f"All configured Gemini fallbacks failed: {summary}")
 
 
+def omniroute_response_text(response):
+    """Extract assistant text from an OpenAI-compatible OmniRoute response."""
+    try:
+        content = response["choices"][0]["message"]["content"]
+    except (KeyError, IndexError, TypeError) as exc:
+        raise ValueError("OmniRoute returned no assistant message") from exc
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "".join(part.get("text", "") for part in content
+                       if isinstance(part, dict) and part.get("type") == "text")
+    raise ValueError("OmniRoute returned an unsupported assistant message")
+
+
+def omniroute_call(api_key, base_url, models, video_id, *, notes_only=False):
+    """Analyze a YouTube video via OmniRoute's OpenAI-compatible chat endpoint."""
+    video_url = f"https://www.youtube.com/watch?v={video_id}"
+    prompt = NOTES_PROMPT if notes_only else PROMPT
+    endpoint = f"{base_url.rstrip('/')}/chat/completions"
+    errors = []
+    for model in models:
+        try:
+            response = requests.post(
+                endpoint,
+                headers={"Authorization": f"Bearer {api_key}"},
+                json={
+                    "model": model,
+                    "messages": [{
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "video_url", "video_url": {"url": video_url}},
+                        ],
+                    }],
+                    "temperature": 0,
+                    "stream": False,
+                },
+                timeout=180,
+            )
+            if not response.ok:
+                detail = response.text[:500].strip()
+                raise requests.HTTPError(
+                    f"HTTP {response.status_code}: {detail or response.reason}",
+                    response=response,
+                )
+            return parse_gemini_json(omniroute_response_text(response.json()))
+        except Exception as exc:
+            status = getattr(getattr(exc, "response", None), "status_code", None)
+            message = str(exc)
+            is_rate_limit = (str(status) == "429" or "429" in message
+                             or "rate limit" in message.lower()
+                             or "quota" in message.lower())
+            errors.append((model, is_rate_limit, message[:500]))
+            print(f"OmniRoute model {model} failed; trying fallback: {message[:300]}")
+
+    if errors and all(item[1] for item in errors):
+        raise RateLimited("All configured OmniRoute models were rate limited")
+    summary = "; ".join(f"{model}: {message}" for model, _, message in errors)
+    raise RuntimeError(f"All configured OmniRoute fallbacks failed: {summary}")
+
+
 def save_links(video_id, results):
     rows = []
     for result in results:
@@ -443,13 +504,36 @@ def main():
             sys.exit(1)
         return
 
-    gemini_keys = split_env_list("GEMINI_API_KEYS", "GEMINI_API_KEY")
-    if not gemini_keys:
-        raise RuntimeError("Missing required environment variable: GEMINI_API_KEYS (or GEMINI_API_KEY)")
-    models = split_env_list("GEMINI_MODELS", "GEMINI_MODEL")
-    if not models:
-        raise RuntimeError("Missing required environment variable: GEMINI_MODELS (or GEMINI_MODEL)")
-    gemini_clients = [genai.Client(api_key=key) for key in gemini_keys]
+    provider = (os.getenv("AI_PROVIDER") or "gemini").strip().lower()
+    if provider == "gemini":
+        gemini_keys = split_env_list("GEMINI_API_KEYS", "GEMINI_API_KEY")
+        if not gemini_keys:
+            raise RuntimeError("Missing required environment variable: GEMINI_API_KEYS (or GEMINI_API_KEY)")
+        models = split_env_list("GEMINI_MODELS", "GEMINI_MODEL")
+        if not models:
+            raise RuntimeError("Missing required environment variable: GEMINI_MODELS (or GEMINI_MODEL)")
+        gemini_clients = [genai.Client(api_key=key) for key in gemini_keys]
+
+        def analyze_video(video_id, *, notes_only=False):
+            return gemini_call(gemini_clients, models, video_id, notes_only=notes_only)
+
+    elif provider == "omniroute":
+        omniroute_api_key = required_env("OMNIROUTE_API_KEY")
+        omniroute_base_url = required_env("OMNIROUTE_BASE_URL")
+        models = split_env_list("OMNIROUTE_MODELS", "OMNIROUTE_MODEL")
+        if not models:
+            raise RuntimeError("Missing required environment variable: OMNIROUTE_MODELS (or OMNIROUTE_MODEL)")
+
+        def analyze_video(video_id, *, notes_only=False):
+            return omniroute_call(
+                omniroute_api_key, omniroute_base_url, models, video_id,
+                notes_only=notes_only,
+            )
+
+    else:
+        raise ValueError("AI_PROVIDER must be 'gemini' or 'omniroute'")
+
+    print(f"AI provider: {provider}; model(s): {', '.join(models)}")
 
     batch_size = int(os.getenv("BATCH_SIZE", "5"))
     if batch_size < 1:
@@ -458,20 +542,20 @@ def main():
     calls = processed = links_found = notes_saved = failures = 0
     rate_limited = False
 
-    def prepare_gemini_call():
+    def prepare_model_call():
         nonlocal calls
         if calls:
             time.sleep(4)
         calls += 1
 
-    # New pending Shorts get one Gemini call that extracts links and notes together.
+    # New pending Shorts get one model call that extracts links and notes together.
     for video in pending:
         video_id = video["video_id"]
-        prepare_gemini_call()
+        prepare_model_call()
         try:
-            result = gemini_call(gemini_clients, models, video_id)
+            result = analyze_video(video_id)
         except RateLimited as exc:
-            print(f"Gemini rate limit reached; stopping cleanly. {exc}")
+            print(f"{provider} rate limit reached; stopping cleanly. {exc}")
             rate_limited = True
             break
         except Exception as exc:
@@ -514,11 +598,11 @@ def main():
         old_notes = get_pending_notes(remaining)
         for video in old_notes:
             video_id = video["video_id"]
-            prepare_gemini_call()
+            prepare_model_call()
             try:
-                result = gemini_call(gemini_clients, models, video_id, notes_only=True)
+                result = analyze_video(video_id, notes_only=True)
             except RateLimited as exc:
-                print(f"Gemini rate limit reached; stopping cleanly. {exc}")
+                print(f"{provider} rate limit reached; stopping cleanly. {exc}")
                 rate_limited = True
                 break
             except Exception as exc:
@@ -544,7 +628,7 @@ def main():
 
     print("\nRun summary")
     print(f"Upload video rows checked: {discovered_count}")
-    print(f"Gemini video calls completed: {processed}")
+    print(f"{provider} video calls completed: {processed}")
     print(f"Website links found and saved: {links_found}")
     print(f"Notes found and saved: {notes_saved}")
     print(f"Processing failures: {failures}")

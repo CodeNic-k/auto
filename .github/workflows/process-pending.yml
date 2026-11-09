@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       batch_size:
-        description: "Gemini calls to make in this run"
+        description: "AI calls to make in this run"
         required: false
         type: number
         default: 5
@@ -40,6 +40,10 @@ jobs:
         run: python scripts/run.py
         env:
           RUN_MODE: process
+          AI_PROVIDER: ${{ vars.AI_PROVIDER || 'gemini' }}
+          OMNIROUTE_BASE_URL: ${{ vars.OMNIROUTE_BASE_URL }}
+          OMNIROUTE_API_KEY: ${{ secrets.OMNIROUTE_API_KEY }}
+          OMNIROUTE_MODELS: ${{ vars.OMNIROUTE_MODELS }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
           GEMINI_MODELS: ${{ vars.GEMINI_MODELS || secrets.GEMINI_MODEL }}
