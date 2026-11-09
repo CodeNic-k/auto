@@ -59,7 +59,14 @@ def supabase_request(method, table, *, params=None, body=None, prefer=None):
         headers=headers,
         timeout=30,
     )
-    response.raise_for_status()
+    if not response.ok:
+        # Include PostgREST's message (for example, "table not found") in the
+        # Actions log so setup problems are diagnosable without exposing keys.
+        detail = response.text[:1000].strip()
+        raise RuntimeError(
+            f"Supabase {method} {table} failed with HTTP {response.status_code}: "
+            f"{detail or response.reason}"
+        )
     if not response.content:
         return []
     return response.json()
