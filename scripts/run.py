@@ -34,7 +34,9 @@ class RateLimited(Exception):
 
 
 def required_env(name):
-    value = os.getenv(name)
+    # GitHub Secrets can accidentally include a copied newline or spaces.
+    # Trim those so they cannot corrupt URLs, headers, or model path segments.
+    value = (os.getenv(name) or "").strip()
     if not value:
         raise RuntimeError(f"Missing required environment variable: {name}")
     return value
