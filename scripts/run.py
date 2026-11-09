@@ -406,39 +406,52 @@ def mark_notes_failed(video_id, error):
 
 
 def main():
-    youtube_key = required_env("YOUTUBE_API_KEY")
+    mode = (os.getenv("RUN_MODE") or "all").strip().lower()
+    if mode not in {"all", "discover", "process"}:
+        raise ValueError("RUN_MODE must be 'discover', 'process', or 'all'")
+    # Check Supabase secrets before spending API quota.
+    required_env("SUPABASE_URL")
+    required_env("SUPABASE_SERVICE_KEY")
+
+    discovered_count = 0
+    channel_errors = 0
+    if mode in {"all", "discover"}:
+        youtube_key = required_env("YOUTUBE_API_KEY")
+        youtube = build("youtube", "v3", developerKey=youtube_key, cache_discovery=False)
+        handles = read_handles()
+        discovery_limit = int(os.getenv("DISCOVERY_LIMIT", "0"))
+        if discovery_limit < 0:
+            raise ValueError("DISCOVERY_LIMIT must be 0 (no limit) or a positive number")
+
+        for handle in handles:
+            try:
+                channel_id, playlist_id = channel_details(youtube, handle)
+                upsert_channel(handle, channel_id, playlist_id)
+                discovered_count += discover_playlist(
+                    youtube, handle, playlist_id, max_videos=discovery_limit
+                )
+                fill_durations(youtube, handle)
+            except Exception as exc:
+                channel_errors += 1
+                print(f"Channel @{handle} could not be scanned: {exc}")
+
+    if mode == "discover":
+        print("\nDiscovery summary")
+        print(f"New video rows added: {discovered_count}")
+        print(f"Channel scan failures: {channel_errors}")
+        if channel_errors:
+            sys.exit(1)
+        return
+
     gemini_keys = split_env_list("GEMINI_API_KEYS", "GEMINI_API_KEY")
     if not gemini_keys:
         raise RuntimeError("Missing required environment variable: GEMINI_API_KEYS (or GEMINI_API_KEY)")
     models = split_env_list("GEMINI_MODELS", "GEMINI_MODEL")
     if not models:
         raise RuntimeError("Missing required environment variable: GEMINI_MODELS (or GEMINI_MODEL)")
-    # Check Supabase secrets before spending API quota.
-    required_env("SUPABASE_URL")
-    required_env("SUPABASE_SERVICE_KEY")
-
-    youtube = build("youtube", "v3", developerKey=youtube_key, cache_discovery=False)
     gemini_clients = [genai.Client(api_key=key) for key in gemini_keys]
-    discovered_count = 0
-    channel_errors = 0
-    handles = read_handles()
-    discovery_limit = int(os.getenv("DISCOVERY_LIMIT", "0"))
-    if discovery_limit < 0:
-        raise ValueError("DISCOVERY_LIMIT must be 0 (no limit) or a positive number")
 
-    for handle in handles:
-        try:
-            channel_id, playlist_id = channel_details(youtube, handle)
-            upsert_channel(handle, channel_id, playlist_id)
-            discovered_count += discover_playlist(
-                youtube, handle, playlist_id, max_videos=discovery_limit
-            )
-            fill_durations(youtube, handle)
-        except Exception as exc:
-            channel_errors += 1
-            print(f"Channel @{handle} could not be scanned: {exc}")
-
-    batch_size = int(os.getenv("BATCH_SIZE", "20"))
+    batch_size = int(os.getenv("BATCH_SIZE", "5"))
     if batch_size < 1:
         raise ValueError("BATCH_SIZE must be at least 1")
     pending = get_pending_shorts(batch_size)
