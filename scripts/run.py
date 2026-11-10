@@ -453,6 +453,20 @@ def process_local_parallel_batch(batch_size, parallelism, analyze_video, still_o
             except Exception as exc:
                 print(f"Focused link extraction failed for {video_id}; keeping the first result: {exc}")
 
+        if not notes_only and not result.get("notes"):
+            print(f"No useful notes in the first pass for {video_id}; retrying focused note extraction.")
+            try:
+                recovery = analyze_video(video_id, notes_only=True)
+                if recovery.get("notes"):
+                    result["notes"] = recovery["notes"]
+                else:
+                    print(f"Focused note extraction found no useful takeaway for {video_id}.")
+            except RetryLater as exc:
+                print(f"OmniRoute became unavailable during note extraction for {video_id}: {exc}")
+                return 0, 0, 0, 0, True
+            except Exception as exc:
+                print(f"Focused note extraction failed for {video_id}; keeping the first result: {exc}")
+
         if notes_only:
             try:
                 count = save_notes(video_id, result.get("notes", []))
@@ -532,18 +546,24 @@ def process_local_parallel_batch(batch_size, parallelism, analyze_video, still_o
 
 
 def parse_model_json(text):
-    text = text.strip()
-    # Tolerate markdown code fences even though the prompt requests plain JSON.
-    text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
-    text = re.sub(r"\s*```$", "", text)
-    data = json.loads(text)
-    if not isinstance(data, dict):
-        raise ValueError("Model response must be a JSON object")
-    if not isinstance(data.get("websites", []), list):
-        raise ValueError("Model websites field must be a JSON array")
-    if not isinstance(data.get("notes", []), list):
-        raise ValueError("Model notes field must be a JSON array")
-    return data
+    if not isinstance(text, str):
+        raise ValueError("Model response text is missing")
+    decoder = json.JSONDecoder()
+    for match in re.finditer(r"\{", text):
+        try:
+            data, _ = decoder.raw_decode(text[match.start():])
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict):
+            continue
+        if not isinstance(data.get("websites", []), list):
+            continue
+        if not isinstance(data.get("notes", []), list):
+            continue
+        # Accept JSON wrapped in markdown or explanatory text, and ignore trailing
+        # commentary/duplicate output after the first valid response object.
+        return data
+    raise ValueError("Model response did not contain a valid websites/notes JSON object")
 
 
 def gemini_call(clients, models, video_id, *, notes_only=False, links_only=False):
@@ -616,15 +636,41 @@ def normalize_url(raw_url):
 def omniroute_response_text(response):
     """Extract assistant text from an OpenAI-compatible OmniRoute response."""
     try:
-        content = response["choices"][0]["message"]["content"]
+        choice = response["choices"][0]
     except (KeyError, IndexError, TypeError) as exc:
         raise ValueError("OmniRoute returned no assistant message") from exc
+    message = choice.get("message") or {}
+    content = message.get("content")
+    if content is None:
+        content = message.get("output_text") or choice.get("text")
     if isinstance(content, str):
         return content
+
+    def text_from_part(part):
+        if isinstance(part, str):
+            return part
+        if isinstance(part, dict):
+            for key in ("text", "output_text", "content"):
+                value = part.get(key)
+                if isinstance(value, str):
+                    return value
+                if isinstance(value, list):
+                    nested = "".join(text_from_part(item) for item in value)
+                    if nested:
+                        return nested
+        return ""
+
+    if isinstance(content, (list, dict)):
+        extracted = text_from_part(content)
+        if extracted:
+            return extracted
     if isinstance(content, list):
-        return "".join(part.get("text", "") for part in content
-                       if isinstance(part, dict) and part.get("type") == "text")
-    raise ValueError("OmniRoute returned an unsupported assistant message")
+        shape = ",".join(str(part.get("type", "?")) for part in content if isinstance(part, dict))
+    elif isinstance(content, dict):
+        shape = ",".join(content.keys())
+    else:
+        shape = type(content).__name__
+    raise ValueError(f"OmniRoute assistant content has unsupported shape: {shape or 'empty'}")
 
 
 def omniroute_call(api_key, base_url, models, video_id, *, notes_only=False, links_only=False):
@@ -706,6 +752,9 @@ def save_links(video_id, results):
             "description": description.strip(), "category": category,
         }
     rows = list(rows_by_url.values())
+    if not rows:
+        print(f"No website URLs were extracted for {video_id}; keeping any existing links.")
+        return 0
     supabase_rpc("replace_video_links", {"p_video_id": video_id, "p_rows": rows})
     return len(rows)
 
