@@ -20,7 +20,9 @@
     h1 { margin:8px 0; font-size:clamp(2rem,6vw,3.1rem); line-height:1.08; letter-spacing:-.04em; }
     h2 { margin:28px 0 12px; font-size:1.2rem; }
     .intro { margin:0; max-width:680px; color:var(--muted); }
-    .controls { display:grid; grid-template-columns:minmax(0,1fr) minmax(190px,230px); gap:12px; margin:22px 0 10px; }
+    .controls { display:grid; grid-template-columns:minmax(0,1fr) minmax(190px,230px) minmax(145px,165px); gap:12px; margin:22px 0 10px; }
+    .page-size-control { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:.9rem; }
+    .page-size-control select { min-width:76px; }
     input,select { width:100%; min-height:48px; padding:10px 13px; border:1px solid var(--line); border-radius:12px; background:white; color:var(--ink); font:inherit; }
     input:focus,select:focus { outline:3px solid #5548d933; border-color:var(--brand); }
     .count { margin:0 2px 12px; color:var(--muted); font-size:.92rem; }
@@ -39,7 +41,22 @@
     .detail { margin:12px 0; color:#4e566e; white-space:pre-line; }
     .source { color:var(--muted); font-size:.9rem; text-decoration:none; }
     .message { border-style:dashed; color:var(--muted); text-align:center; }
-    @media(max-width:620px) { .controls { grid-template-columns:1fr; } #results { grid-template-columns:1fr; } .card-top { flex-direction:column; } }
+    .card.notes-open { display:grid; grid-column:1/-1; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:18px; }
+    .website-main { display:flex; flex-direction:column; min-width:0; }
+    .related-notes { min-width:0; border-left:1px solid var(--line); padding-left:18px; }
+    .related-notes[hidden] { display:none; }
+    .related-notes h3 { margin:0 0 12px; font-size:1rem; }
+    .related-notes-toggle { align-self:flex-start; margin-top:12px; }
+    .related-note { padding:12px 0; border-top:1px solid var(--line); }
+    .related-note:first-of-type { border-top:0; padding-top:0; }
+    .related-note .detail { margin:8px 0; font-size:.94rem; }
+    .pagination { display:flex; align-items:center; justify-content:center; gap:12px; margin:22px 0 4px; }
+    .pagination[hidden] { display:none; }
+    .pagination button { min-height:40px; padding:8px 14px; border:1px solid var(--line); border-radius:10px; background:#fff; color:var(--ink); font:inherit; font-weight:650; cursor:pointer; }
+    .pagination button:hover:not(:disabled) { border-color:var(--brand); color:var(--brand); }
+    .pagination button:disabled { opacity:.45; cursor:not-allowed; }
+    .pagination span { color:var(--muted); font-size:.92rem; }
+    @media(max-width:620px) { .controls { grid-template-columns:1fr; } #results { grid-template-columns:1fr; } .card-top { flex-direction:column; } .card.notes-open { grid-column:auto; grid-template-columns:1fr; } .related-notes { border-left:0; border-top:1px solid var(--line); padding:16px 0 0; } }
   </style>
 </head>
 <body>
@@ -58,9 +75,13 @@
       <div class="controls">
         <input id="search" type="search" placeholder="Search websites…" aria-label="Search websites">
         <select id="category" aria-label="Filter by category"><option value="">All categories</option></select>
+        <label class="page-size-control" for="page-size">Per page
+          <select id="page-size" aria-label="Websites per page"><option value="20">20</option><option value="50" selected>50</option><option value="100">100</option><option value="1000">1000</option></select>
+        </label>
       </div>
       <p class="count" id="count" aria-live="polite">Loading websites…</p>
       <div id="results" aria-live="polite"></div>
+      <div class="pagination" id="pagination" aria-label="Website pages" hidden></div>
     </section>
   </main>
   <script>
@@ -72,32 +93,46 @@
       "How-to & workflows":"Searches, prompts, and step-by-step tasks", "Other":"Other useful websites"
     };
     const resultsEl=document.getElementById("results"), countEl=document.getElementById("count");
-    const searchEl=document.getElementById("search"), filterEl=document.getElementById("category");
-    const categoryCards=document.getElementById("category-cards"); let rows=[],comments=new Map(),siteTools;
+    const searchEl=document.getElementById("search"), filterEl=document.getElementById("category"),pageSizeEl=document.getElementById("page-size");
+    const categoryCards=document.getElementById("category-cards"),paginationEl=document.getElementById("pagination"); let rows=[],notes=[],comments=new Map(),noteComments=new Map(),notesByVideo=new Map(),siteTools,page=1,pageSize=50;const expandedNotes=new Set();
     function text(parent,tag,value,className){const el=document.createElement(tag);el.textContent=value;if(className)el.className=className;parent.appendChild(el);return el;}
     function linkLabel(item){try{const url=new URL(item.url),host=url.hostname.toLowerCase().replace(/^www\./,"");const query=url.searchParams.get("q");if(query&&/^google\.[a-z]{2,3}(?:\.[a-z]{2})?$/.test(host))return `Google search: ${query}`;}catch{}return item.domain||item.url;}
     function render(){
       const term=searchEl.value.trim().toLowerCase(),cat=filterEl.value;
-      const shown=rows.filter(x=>(!cat||x.category===cat)&&(!term||[x.url,x.domain,x.description,x.category].join(" ").toLowerCase().includes(term)));
-      resultsEl.replaceChildren();countEl.textContent=`${shown.length} ${shown.length===1?"website":"websites"}`;
+      const matched=rows.filter(x=>(!cat||x.category===cat)&&(!term||[x.url,x.domain,x.description,x.category].join(" ").toLowerCase().includes(term)));
+      pageSize=Number(pageSizeEl.value)||50;const pageCount=Math.max(1,Math.ceil(matched.length/pageSize));page=Math.min(page,pageCount);
+      const start=(page-1)*pageSize,shown=matched.slice(start,start+pageSize);
+      resultsEl.replaceChildren();countEl.textContent=matched.length?`Showing ${start+1}–${start+shown.length} of ${matched.length} ${matched.length===1?"website":"websites"}`:`0 websites`;
+      paginationEl.replaceChildren();paginationEl.hidden=pageCount<=1;
+      if(pageCount>1){const previous=document.createElement("button");previous.type="button";previous.textContent="Previous";previous.disabled=page===1;previous.addEventListener("click",()=>{page--;render();});const status=document.createElement("span");status.textContent=`Page ${page} of ${pageCount}`;const next=document.createElement("button");next.type="button";next.textContent="Next";next.disabled=page===pageCount;next.addEventListener("click",()=>{page++;render();});paginationEl.append(previous,status,next);}
       if(!shown.length){text(resultsEl,"div",rows.length?"No websites match your search.":"No website links have been collected yet.","message");return;}
-      for(const item of shown){const card=document.createElement("article");card.className="card";const top=document.createElement("div");top.className="card-top";
+      for(const item of shown){const card=document.createElement("article");card.className="card";if(expandedNotes.has(item.id))card.classList.add("notes-open");const websiteMain=document.createElement("div");websiteMain.className="website-main";const top=document.createElement("div");top.className="card-top";
         const a=text(top,"a",linkLabel(item),"url");a.href=item.url;a.target="_blank";a.rel="noopener noreferrer";
-        text(top,"span",item.category||"Other","badge");card.appendChild(top);
-        const detail=text(card,"p",item.description||"No description provided.","detail");
-        const source=text(card,"a","Watch source video ↗","source");source.href=`https://www.youtube.com/watch?v=${encodeURIComponent(item.video_id)}`;source.target="_blank";source.rel="noopener noreferrer";resultsEl.appendChild(card);
-        siteTools.attach(card,item,"link",detail,comments.get(`link:${item.id}`)||[],load);
+        text(top,"span",item.category||"Other","badge");websiteMain.appendChild(top);
+        const detail=text(websiteMain,"p",item.description||"No description provided.","detail");
+        const source=text(websiteMain,"a","Watch source video ↗","source");source.href=`https://www.youtube.com/watch?v=${encodeURIComponent(item.video_id)}`;source.target="_blank";source.rel="noopener noreferrer";
+        const related=notesByVideo.get(item.video_id)||[];
+        if(related.length){const toggle=text(websiteMain,"button",`${expandedNotes.has(item.id)?"Hide":"Show"} related notes (${related.length})","tool-button related-notes-toggle");toggle.type="button";toggle.setAttribute("aria-expanded",String(expandedNotes.has(item.id)));toggle.addEventListener("click",()=>{if(expandedNotes.has(item.id))expandedNotes.delete(item.id);else expandedNotes.add(item.id);render();});}
+        siteTools.attach(websiteMain,item,"link",detail,comments.get(`link:${item.id}`)||[],load);
+        const notePanel=document.createElement("aside");notePanel.className="related-notes";notePanel.hidden=!expandedNotes.has(item.id);notePanel.setAttribute("aria-label","Related notes from this video");
+        text(notePanel,"h3",`Notes from this video (${related.length})`);
+        for(const note of related){const noteCard=document.createElement("section");noteCard.className="related-note";const noteTop=document.createElement("div");noteTop.className="card-top";text(noteTop,"strong",note.title,"title");text(noteTop,"span",note.category||"Other","badge");noteCard.appendChild(noteTop);const noteDetail=text(noteCard,"p",note.detail,"detail");siteTools.attach(noteCard,note,"note",noteDetail,noteComments.get(`note:${note.id}`)||[],load);notePanel.appendChild(noteCard);}
+        card.append(websiteMain,notePanel);resultsEl.appendChild(card);
       }
     }
     async function load(){
       if(!window.supabase||!window.APP_SUPABASE_URL||!window.APP_SUPABASE_PUBLIC_KEY){countEl.textContent="Supabase configuration is missing.";return;}
       try{
-        rows=[];comments=new Map();
+        rows=[];notes=[];comments=new Map();noteComments=new Map();notesByVideo=new Map();
         const db=window.supabase.createClient(window.APP_SUPABASE_URL,window.APP_SUPABASE_PUBLIC_KEY),size=1000;
         if(!siteTools){siteTools=window.createSiteTools(db);document.addEventListener("site-editor-change",render);}
         await siteTools.ready;
         for(let from=0;;from+=size){const {data,error}=await db.from("links").select("id,video_id,url,domain,description,category,created_at").order("created_at",{ascending:false}).range(from,from+size-1);if(error)throw error;rows.push(...data);if(data.length<size)break;}
         comments=await siteTools.loadComments(rows,"link");
+        const videoIds=[...new Set(rows.map(item=>item.video_id))];
+        for(let from=0;from<videoIds.length;from+=100){const {data,error}=await db.from("notes").select("id,video_id,title,detail,category,created_at").in("video_id",videoIds.slice(from,from+100)).order("created_at",{ascending:false});if(error)throw error;notes.push(...data);}
+        noteComments=await siteTools.loadComments(notes,"note");
+        for(const note of notes){if(!notesByVideo.has(note.video_id))notesByVideo.set(note.video_id,[]);notesByVideo.get(note.video_id).push(note);}
         const counts=new Map();for(const item of rows){const c=item.category||"Other";counts.set(c,(counts.get(c)||0)+1);}
         categoryCards.replaceChildren();filterEl.replaceChildren();const all=document.createElement("option");all.value="";all.textContent="All categories";filterEl.appendChild(all);
         for(const [name,n] of [...counts].sort((a,b)=>a[0].localeCompare(b[0]))){const option=document.createElement("option");option.value=name;option.textContent=name;filterEl.appendChild(option);
@@ -105,7 +140,7 @@
         if(!counts.size)text(categoryCards,"div","Categories will appear after website links are collected.","message");render();
       }catch(error){console.error(error);countEl.textContent="Could not load websites. Check the Supabase URL, public key, table grants, and RLS policy.";categoryCards.replaceChildren();resultsEl.replaceChildren();text(resultsEl,"div","Supabase could not return the links table.","message");}
     }
-    searchEl.addEventListener("input",render);filterEl.addEventListener("change",render);load();
+    searchEl.addEventListener("input",()=>{page=1;render();});filterEl.addEventListener("change",()=>{page=1;render();});pageSizeEl.addEventListener("change",()=>{page=1;render();});load();
   </script>
 </body>
 </html>

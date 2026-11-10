@@ -704,7 +704,30 @@ def omniroute_call(api_key, base_url, models, video_id, *, notes_only=False, lin
                     f"HTTP {response.status_code}: {detail or response.reason}",
                     response=response,
                 )
-            return parse_model_json(omniroute_response_text(response.json()))
+            response_body = response.json()
+            bridge_info = response.headers.get("x-omniroute-modality-bridge")
+            if bridge_info:
+                print(f"OmniRoute video bridge used for {video_id}: {bridge_info[:240]}")
+            else:
+                print(
+                    f"OmniRoute did not report modality-bridge processing for {video_id}; "
+                    "check whether this model/provider accepts video_url natively."
+                )
+            response_text = omniroute_response_text(response_body)
+            try:
+                return parse_model_json(response_text)
+            except ValueError as exc:
+                # This distinguishes a model refusing/being unable to inspect the video
+                # from malformed JSON without dumping a full response into worker logs.
+                preview = " ".join(response_text.split())[:240]
+                finish_reason = "unknown"
+                try:
+                    finish_reason = str(response_body["choices"][0].get("finish_reason") or "unknown")
+                except (KeyError, IndexError, TypeError):
+                    pass
+                raise ValueError(
+                    f"{exc}; finish_reason={finish_reason}; response_preview={preview!r}"
+                ) from exc
         except Exception as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
             message = str(exc)

@@ -20,7 +20,9 @@
     h1 { margin:8px 0; font-size:clamp(2rem,6vw,3.1rem); line-height:1.08; letter-spacing:-.04em; }
     h2 { margin:28px 0 12px; font-size:1.2rem; }
     .intro { margin:0; max-width:700px; color:var(--muted); }
-    .controls { display:grid; grid-template-columns:minmax(0,1fr) minmax(190px,230px); gap:12px; margin:22px 0 10px; }
+    .controls { display:grid; grid-template-columns:minmax(0,1fr) minmax(190px,230px) minmax(145px,165px); gap:12px; margin:22px 0 10px; }
+    .page-size-control { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:.9rem; }
+    .page-size-control select { min-width:76px; }
     input,select { width:100%; min-height:48px; padding:10px 13px; border:1px solid var(--line); border-radius:12px; background:#fff; color:var(--ink); font:inherit; }
     input:focus,select:focus { outline:3px solid #5548d933; border-color:var(--brand); }
     .count { margin:0 2px 12px; color:var(--muted); font-size:.92rem; }
@@ -40,6 +42,12 @@
     .source { font-size:.9rem; text-decoration:none; }
     .source:hover { text-decoration:underline; }
     .message { border-style:dashed; color:var(--muted); text-align:center; }
+    .pagination { display:flex; align-items:center; justify-content:center; gap:12px; margin:22px 0 4px; }
+    .pagination[hidden] { display:none; }
+    .pagination button { min-height:40px; padding:8px 14px; border:1px solid var(--line); border-radius:10px; background:#fff; color:var(--ink); font:inherit; font-weight:650; cursor:pointer; }
+    .pagination button:hover:not(:disabled) { border-color:var(--brand); color:var(--brand); }
+    .pagination button:disabled { opacity:.45; cursor:not-allowed; }
+    .pagination span { color:var(--muted); font-size:.92rem; }
     @media(max-width:620px) { .controls { grid-template-columns:1fr; } #results { grid-template-columns:1fr; } .card-top { flex-direction:column; } }
   </style>
 </head>
@@ -59,18 +67,22 @@
       <div class="controls">
         <input id="search" type="search" placeholder="Search notes…" aria-label="Search notes">
         <select id="category" aria-label="Filter by category"><option value="">All categories</option></select>
+        <label class="page-size-control" for="page-size">Per page
+          <select id="page-size" aria-label="Notes per page"><option value="20">20</option><option value="50" selected>50</option><option value="100">100</option><option value="1000">1000</option></select>
+        </label>
       </div>
       <p class="count" id="count" aria-live="polite">Loading notes…</p>
       <div id="results" aria-live="polite"></div>
+      <div class="pagination" id="pagination" aria-label="Notes pages" hidden></div>
     </section>
   </main>
   <script>
     const descriptions={"AI tools":"AI ideas and techniques","Productivity":"Ways to work more effectively","Design":"Visual and creative techniques","Dev tools":"Programming and developer tips","Privacy/Security":"Safer and more private habits","Free resources":"Useful free materials","Learning":"Study and learning techniques","Entertainment":"Games and fun ideas","How-to & workflows":"Searches, prompts, and step-by-step tasks","Other":"Other practical takeaways"};
-    const resultsEl=document.getElementById("results"),countEl=document.getElementById("count"),searchEl=document.getElementById("search"),filterEl=document.getElementById("category"),categoryCards=document.getElementById("category-cards");let rows=[],comments=new Map(),siteTools;
+    const resultsEl=document.getElementById("results"),countEl=document.getElementById("count"),searchEl=document.getElementById("search"),filterEl=document.getElementById("category"),categoryCards=document.getElementById("category-cards"),paginationEl=document.getElementById("pagination"),pageSizeEl=document.getElementById("page-size");let rows=[],comments=new Map(),siteTools,page=1,pageSize=50;
     function text(parent,tag,value,className){const el=document.createElement(tag);el.textContent=value;if(className)el.className=className;parent.appendChild(el);return el;}
-    function render(){const term=searchEl.value.trim().toLowerCase(),cat=filterEl.value;const shown=rows.filter(x=>(!cat||x.category===cat)&&(!term||[x.title,x.detail,x.category].join(" ").toLowerCase().includes(term)));resultsEl.replaceChildren();countEl.textContent=`${shown.length} ${shown.length===1?"note":"notes"}`;if(!shown.length){text(resultsEl,"div",rows.length?"No notes match your search.":"No notes have been collected yet.","message");return;}for(const item of shown){const card=document.createElement("article");card.className="card";const top=document.createElement("div");top.className="card-top";text(top,"div",item.title,"title");text(top,"span",item.category||"Other","badge");card.appendChild(top);const detail=text(card,"p",item.detail,"detail");const source=text(card,"a","Watch source video","source");source.href=`https://www.youtube.com/watch?v=${encodeURIComponent(item.video_id)}`;source.target="_blank";source.rel="noopener noreferrer";resultsEl.appendChild(card);siteTools.attach(card,item,"note",detail,comments.get(`note:${item.id}`)||[],load);}}
+    function render(){pageSize=Number(pageSizeEl.value)||50;const term=searchEl.value.trim().toLowerCase(),cat=filterEl.value,matched=rows.filter(x=>(!cat||x.category===cat)&&(!term||[x.title,x.detail,x.category].join(" ").toLowerCase().includes(term))),pageCount=Math.max(1,Math.ceil(matched.length/pageSize));page=Math.min(page,pageCount);const start=(page-1)*pageSize,shown=matched.slice(start,start+pageSize);resultsEl.replaceChildren();countEl.textContent=matched.length?`Showing ${start+1}–${start+shown.length} of ${matched.length} ${matched.length===1?"note":"notes"}`:"0 notes";paginationEl.replaceChildren();paginationEl.hidden=pageCount<=1;if(pageCount>1){const previous=document.createElement("button");previous.type="button";previous.textContent="Previous";previous.disabled=page===1;previous.addEventListener("click",()=>{page--;render();});const status=document.createElement("span");status.textContent=`Page ${page} of ${pageCount}`;const next=document.createElement("button");next.type="button";next.textContent="Next";next.disabled=page===pageCount;next.addEventListener("click",()=>{page++;render();});paginationEl.append(previous,status,next);}if(!matched.length){text(resultsEl,"div",rows.length?"No notes match your search.":"No notes have been collected yet.","message");return;}for(const item of shown){const card=document.createElement("article");card.className="card";const top=document.createElement("div");top.className="card-top";text(top,"div",item.title,"title");text(top,"span",item.category||"Other","badge");card.appendChild(top);const detail=text(card,"p",item.detail,"detail");const source=text(card,"a","Watch source video","source");source.href=`https://www.youtube.com/watch?v=${encodeURIComponent(item.video_id)}`;source.target="_blank";source.rel="noopener noreferrer";resultsEl.appendChild(card);siteTools.attach(card,item,"note",detail,comments.get(`note:${item.id}`)||[],load);}}
     async function load(){if(!window.supabase||!window.APP_SUPABASE_URL||!window.APP_SUPABASE_PUBLIC_KEY){countEl.textContent="Supabase configuration is missing.";return;}try{rows=[];comments=new Map();const db=window.supabase.createClient(window.APP_SUPABASE_URL,window.APP_SUPABASE_PUBLIC_KEY),size=1000;if(!siteTools){siteTools=window.createSiteTools(db);document.addEventListener("site-editor-change",render);}await siteTools.ready;for(let from=0;;from+=size){const{data,error}=await db.from("notes").select("id,video_id,title,detail,category,created_at").order("created_at",{ascending:false}).range(from,from+size-1);if(error)throw error;rows.push(...data);if(data.length<size)break;}comments=await siteTools.loadComments(rows,"note");const counts=new Map();for(const item of rows){const c=item.category||"Other";counts.set(c,(counts.get(c)||0)+1);}categoryCards.replaceChildren();filterEl.replaceChildren();const all=document.createElement("option");all.value="";all.textContent="All categories";filterEl.appendChild(all);for(const[name,n]of[...counts].sort((a,b)=>a[0].localeCompare(b[0]))){const option=document.createElement("option");option.value=name;option.textContent=name;filterEl.appendChild(option);const box=document.createElement("a");box.className="category-card";box.href=`./category.html?type=notes&category=${encodeURIComponent(name)}`;text(box,"strong",name);text(box,"small",`${n} ${n===1?"note":"notes"} · ${descriptions[name]||"Browse this category"}`);categoryCards.appendChild(box);}if(!counts.size)text(categoryCards,"div","Category cards will appear when notes are collected.","message");render();}catch(error){console.error(error);countEl.textContent="Could not load notes. Run the notes SQL migration and check table permissions and RLS.";categoryCards.replaceChildren();resultsEl.replaceChildren();text(resultsEl,"div","The notes table is not available yet, or Supabase denied access.","message");}}
-    searchEl.addEventListener("input",render);filterEl.addEventListener("change",render);load();
+    searchEl.addEventListener("input",()=>{page=1;render();});filterEl.addEventListener("change",()=>{page=1;render();});pageSizeEl.addEventListener("change",()=>{page=1;render();});load();
   </script>
 </body>
 </html>

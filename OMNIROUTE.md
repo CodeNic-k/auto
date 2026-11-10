@@ -38,8 +38,14 @@ Existing links and notes remain visible until each video's new result is saved.
 
 ## Set up the local worker
 
-1. Start OmniRoute and connect the model you want to use. Confirm that it can
-   analyze video input directly or through OmniRoute's Video Bridge.
+1. Start OmniRoute and connect the model you want to use. For routes that do not
+   accept video natively, open **Settings → Modality Bridge → Video**, enable
+   the Video Bridge, choose an available vision model, and confirm the runtime
+   reports FFmpeg/ffprobe as available. The Video Bridge is opt-in in OmniRoute;
+   without native video support or the bridge, a `video_url` part may not reach
+   the model as video. Successful bridged responses include the
+   `x-omniroute-modality-bridge` response header; the local worker now logs this
+   header (or reports when OmniRoute did not return it).
 2. Copy `.env.local.example` to `.env.local` in the project folder. Fill in
    `SUPABASE_URL`, a backend-only Supabase key, `YOUTUBE_API_KEY`,
    `OMNIROUTE_API_KEY`, and a model ID listed by OmniRoute's `/v1/models`
