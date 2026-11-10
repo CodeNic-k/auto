@@ -6,7 +6,10 @@ checks up to 50 recent uploads per channel hourly by default; change
 `LOCAL_DISCOVERY_INTERVAL_SECONDS` or `DISCOVERY_LIMIT` in `.env.local` if you
 want a different cadence or scan size. It processes up to four videos at once,
 choosing one pending video from each of four configured channels per wave.
-`BATCH_SIZE` is the total number of model calls in a pass; `LOCAL_PARALLEL_CHANNELS`
+When a local first pass returns no websites, the worker makes one extra focused
+link-extraction request before saving an empty result.
+`BATCH_SIZE` is the total number of videos in a pass; a focused retry can add
+one extra request for a video with no extracted sites. `LOCAL_PARALLEL_CHANNELS`
 sets the number of simultaneous channel slots. GitHub's Gemini processor remains
 sequential and does not use the local parallel setting. The daily GitHub discovery
 workflow also checks channels. GitHub's separate processor uses Gemini every 15 minutes when

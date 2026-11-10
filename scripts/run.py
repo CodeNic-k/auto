@@ -34,12 +34,20 @@ ONLY one JSON object with this exact shape:
 }}
 
 WEBSITES: Capture each distinct website, page, and search that the video actually uses,
-shows, or recommends. Prefer the exact page URL visible in the video. Never invent a URL.
-If a Google search bar is used, copy its exact readable query into search_query and make
-url a direct Google search URL for that query. Do not save a bare Google homepage just
-because Google appears on screen. If the query cannot be read, do not guess it or save a
-generic Google link. Keep different queries as separate entries, but include a repeated
-query only once.
+shows, or recommends. Inspect the entire video, especially browser address bars, tabs,
+page headers, app/site logos, visible text, QR codes, spoken site names, and call-to-action
+instructions. A complete URL is NOT required: if a hostname or domain is readable, save
+that host as a usable HTTPS URL even if the page path is hidden or cut off. If a URL is
+partially visible, preserve the readable hostname and path; do not discard the site just
+because part of the address is obscured. If a clearly identifiable service is named or
+shown but its address is not visible, include its official homepage only when you know
+the official domain with high confidence. Never invent a deep link or guess an uncertain
+domain. Do not return an empty websites array merely because no full URL was spoken aloud.
+
+For Google searches, copy the exact readable query into search_query and make url a direct
+Google search URL for it. Do not save a bare Google homepage just because Google appears
+on screen. If the query is unreadable, do not make one up. Keep different queries as
+separate entries, but include a repeated query only once.
 
 Every website description must make sense without replaying the video. State what the
 creator uses the site for, what the viewer should type/click/paste/upload/select, and
@@ -66,6 +74,26 @@ return notes: []. Never make up steps or claims to fill space.
 Use categories only from: {CATEGORY_TEXT}. Choose "How-to & workflows" when the main
 value is a sequence of actions, a search query, or a prompt-driven workflow; otherwise
 choose the closest topic category.
+""".strip()
+LINKS_ONLY_PROMPT = f"""
+Watch the entire video again and focus only on finding every website, app/site, and search
+the creator uses, shows, names, or tells the viewer to open. Return ONLY this JSON:
+{{"websites": [{{"url": "...", "search_query": null, "description": "...", "category": "..."}}]}}
+
+Inspect all frames, including address bars, browser tabs, page titles, logos, QR codes,
+overlays, readable text, and spoken instructions. A complete URL is NOT required. If only
+the hostname/domain is visible, save that host as its HTTPS URL. If a clearly identified
+service is named or shown but its URL is hidden, use the official homepage only when its
+domain is unambiguous. Never invent a page path or guess an uncertain domain.
+
+For every Google search, capture the exact readable query and set url to the direct Google
+search URL. If the query cannot be read, do not make one up. Do not omit an identified
+site just because the video does not display a complete URL. Return an empty array only
+after checking the whole video and finding no identifiable websites or search actions.
+
+For each entry, explain the site's purpose, the input/action demonstrated, and the
+expected result. Include exact prompts, search terms, model/resource names, and steps
+that are visible or spoken. Use categories only from: {CATEGORY_TEXT}.
 """.strip()
 NOTES_PROMPT = f"""
 Watch the full YouTube video, including spoken audio and readable on-screen text. Return
@@ -411,6 +439,20 @@ def process_local_parallel_batch(batch_size, parallelism, analyze_video, still_o
             print(f"Video {video_id} failed; it will not block other channels: {exc}")
             return 1, 0, 0, 0, 1
 
+        if not notes_only and not result.get("websites"):
+            print(f"No websites in the first pass for {video_id}; retrying with focused link extraction.")
+            try:
+                recovery = analyze_video(video_id, links_only=True)
+                if recovery.get("websites"):
+                    result["websites"] = recovery["websites"]
+                else:
+                    print(f"Focused extraction still found no identifiable sites for {video_id}.")
+            except RetryLater as exc:
+                print(f"OmniRoute became unavailable during focused extraction for {video_id}: {exc}")
+                return 0, 0, 0, 0, True
+            except Exception as exc:
+                print(f"Focused link extraction failed for {video_id}; keeping the first result: {exc}")
+
         if notes_only:
             try:
                 count = save_notes(video_id, result.get("notes", []))
@@ -504,12 +546,12 @@ def parse_model_json(text):
     return data
 
 
-def gemini_call(clients, models, video_id, *, notes_only=False):
+def gemini_call(clients, models, video_id, *, notes_only=False, links_only=False):
     """Analyze a YouTube video with GitHub's Gemini fallback configuration."""
     from google.genai import types
 
     video_url = f"https://www.youtube.com/watch?v={video_id}"
-    prompt = NOTES_PROMPT if notes_only else PROMPT
+    prompt = NOTES_PROMPT if notes_only else LINKS_ONLY_PROMPT if links_only else PROMPT
     errors = []
     for model in models:
         for client_index, client in enumerate(clients, start=1):
@@ -585,10 +627,10 @@ def omniroute_response_text(response):
     raise ValueError("OmniRoute returned an unsupported assistant message")
 
 
-def omniroute_call(api_key, base_url, models, video_id, *, notes_only=False):
+def omniroute_call(api_key, base_url, models, video_id, *, notes_only=False, links_only=False):
     """Analyze a YouTube video via OmniRoute's OpenAI-compatible chat endpoint."""
     video_url = f"https://www.youtube.com/watch?v={video_id}"
-    prompt = NOTES_PROMPT if notes_only else PROMPT
+    prompt = NOTES_PROMPT if notes_only else LINKS_ONLY_PROMPT if links_only else PROMPT
     endpoint = f"{base_url.rstrip('/')}/chat/completions"
     errors = []
     for model in models:
@@ -773,10 +815,10 @@ def main():
         if not models:
             raise RuntimeError("Missing required environment variable: OMNIROUTE_MODELS (or OMNIROUTE_MODEL)")
 
-        def analyze_video(video_id, *, notes_only=False):
+        def analyze_video(video_id, *, notes_only=False, links_only=False):
             return omniroute_call(
                 omniroute_api_key, omniroute_base_url, models,
-                video_id, notes_only=notes_only,
+                video_id, notes_only=notes_only, links_only=links_only,
             )
     elif provider == "gemini":
         from google import genai
@@ -789,8 +831,10 @@ def main():
             raise RuntimeError("Missing required environment variable: GEMINI_MODELS (or GEMINI_MODEL)")
         clients = [genai.Client(api_key=key) for key in gemini_keys]
 
-        def analyze_video(video_id, *, notes_only=False):
-            return gemini_call(clients, models, video_id, notes_only=notes_only)
+        def analyze_video(video_id, *, notes_only=False, links_only=False):
+            return gemini_call(
+                clients, models, video_id, notes_only=notes_only, links_only=links_only,
+            )
     else:
         raise ValueError("AI_PROVIDER must be 'omniroute' or 'gemini'")
     print(f"AI provider: {provider}; model(s): {', '.join(models)}")
@@ -813,7 +857,7 @@ def main():
         )
         print("\nRun summary")
         print(f"Upload video rows checked: {discovered_count}")
-        print(f"Video model calls attempted: {calls}; completed: {processed}")
+        print(f"Videos started in this pass: {calls}; completed: {processed}")
         print(f"Website links found and saved: {links_found}")
         print(f"Notes found and saved: {notes_saved}")
         print(f"Processing failures: {failures}")
