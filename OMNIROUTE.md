@@ -104,7 +104,7 @@ elevated database access.
    Edit controls. Anyone can post comments; comments and site content have no
    delete controls.
 
-To refresh videos that contain Google links, review and run
-`supabase/requeue_google_videos.sql`. It requeues the full videos, so the worker
-refreshes all links and notes attached to those videos, not only their Google
-entries.
+To refresh videos that contain YouTube, ChatGPT, Hugging Face, or Google links,
+review and run `supabase/requeue_selected_site_videos.sql`. It requeues the full
+videos, so the worker refreshes all links and notes attached to those videos,
+not only the matching site entries.
