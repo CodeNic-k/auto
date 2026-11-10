@@ -4,13 +4,18 @@ When your PC worker is running, it discovers recent uploads from `channels.txt`
 and processes the shared Supabase queue using OmniRoute only. The local worker
 checks up to 50 recent uploads per channel hourly by default; change
 `LOCAL_DISCOVERY_INTERVAL_SECONDS` or `DISCOVERY_LIMIT` in `.env.local` if you
-want a different cadence or scan size. It processes up to four videos at once,
-choosing one pending video from each of four configured channels per wave.
+want a different cadence or scan size. With `LOCAL_PARALLEL_BATCHES=2` and
+`LOCAL_VIDEOS_PER_BATCH=2`, it runs two batches at once, with two videos in each
+batch (four active videos total). When a batch finishes, it starts the next one
+automatically. `BATCH_SIZE` limits videos per pass; setting it to 1000 lets the
+worker keep launching batches until the pending queue is empty or 1000 videos have
+started. The local scheduler selects across all configured channels.
 When a local first pass returns no websites or notes, the worker makes a focused
 second pass for the missing content before saving an empty result.
-`BATCH_SIZE` is the total number of videos in a pass; focused link and note
-retries can each add one request when that content is empty. `LOCAL_PARALLEL_CHANNELS`
-sets the number of simultaneous channel slots. GitHub's Gemini processor remains
+`BATCH_SIZE` is the maximum number of videos started in a pass. The local-only
+`LOCAL_PARALLEL_BATCHES=2` and `LOCAL_VIDEOS_PER_BATCH=2` settings allow four videos
+to be active across two independently replenished batches. Focused link and note retries
+can add requests when content is empty. GitHub's Gemini processor remains
 sequential and does not use the local parallel setting. The daily GitHub discovery
 workflow also checks channels. GitHub's separate processor uses Gemini every 15 minutes when
 it can acquire the queue lease, so pending items can be processed while your PC
@@ -37,6 +42,9 @@ content refresh migration:
    existing exact-URL duplicates and makes each exact URL a single website entry.
    It records every source video separately so each source's notes remain visible
    from the website card. Run this migration after the preceding files.
+5. [`supabase/normalize_website_urls.sql`](supabase/normalize_website_urls.sql) merges
+   older `http`, `www`, and trailing-slash variants. Run it after the global dedup
+   migration, then requeue the affected Shorts if their descriptions need refreshing.
 
 Existing links and notes remain visible until each video's new result is saved.
 

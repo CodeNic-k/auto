@@ -8,7 +8,7 @@ import socket
 import sys
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, as_completed, wait
 from datetime import datetime, timezone
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -55,6 +55,8 @@ background tabs, joke searches, and unrelated queries unless the creator deliber
 uses them as part of the video's point or demonstration. Do not save a bare Google homepage
 just because Google appears on screen. If the query is unreadable, do not make one up.
 Keep distinct demonstrated queries as separate entries, but include a repeated query once.
+If a Google search is only navigation to a separately identified destination, omit the
+search entry; keep it when the search itself is part of the useful workflow.
 
 Every website description must make sense without replaying the video and must describe
 only that entry's destination. Put that website's purpose, the viewer's steps, exact
@@ -110,6 +112,8 @@ tabs, joke searches, and unrelated queries unless the creator deliberately uses 
 demonstration. If the query cannot be read, do not make one up. Do not omit an identified
 website just because the video does not display a complete URL. Return an empty array only
 after checking the whole video and finding no identifiable websites or qualifying searches.
+If a Google search is only navigation to a separately identified destination, omit the
+search entry; keep it when the search itself is part of the useful workflow.
 
 For each entry, explain the site's purpose, the input/action demonstrated, and the
 expected result. Include exact prompts, search terms, model/resource names, and steps
@@ -433,12 +437,11 @@ def get_pending_notes_for_channel(handle):
     )
 
 
-def process_local_parallel_batch(batch_size, parallelism, analyze_video, still_owns_lease):
-    """Process one video per configured channel concurrently, in bounded waves."""
-    handles = read_handles()
-    if not handles:
-        return 0, 0, 0, 0, 0
-    parallelism = min(parallelism, len(handles))
+def process_local_parallel_batches(batch_size, parallel_batches, videos_per_batch,
+                                   analyze_video, still_owns_lease):
+    """Run bounded batches concurrently, replenishing a slot when a batch completes."""
+    if batch_size < 1 or parallel_batches < 1 or videos_per_batch < 1:
+        raise ValueError("Batch size and local batch parallelism settings must be at least 1")
     calls = processed = links_found = notes_saved = failures = 0
     deferred = False
 
@@ -528,44 +531,67 @@ def process_local_parallel_batch(batch_size, parallelism, analyze_video, still_o
             print(f"Website scan done for {video_id}; saving notes failed: {exc}")
             return 1, 1, link_count, 0, 1
 
-    def process_waves(notes_only):
+    def process_batches(notes_only):
         nonlocal calls, processed, links_found, notes_saved, failures, deferred
-        offset = 0
-        while calls < batch_size and not deferred:
-            if not still_owns_lease():
-                print("Local worker lost its queue lease; ending this pass.")
-                deferred = True
-                return
-            ordered_handles = handles[offset:] + handles[:offset]
-            wave = []
-            for handle in ordered_handles:
-                if len(wave) >= min(parallelism, batch_size - calls):
-                    break
-                pending = (get_pending_notes_for_channel(handle) if notes_only
-                           else get_pending_shorts_for_channel(handle))
-                if pending:
-                    wave.append(pending[0])
-            if not wave:
-                return
-            offset = (offset + len(wave)) % len(handles)
-            if calls:
-                time.sleep(4)
-            calls += len(wave)
-            with ThreadPoolExecutor(max_workers=parallelism) as pool:
-                futures = [pool.submit(analyze_one, video, notes_only) for video in wave]
-                for future in as_completed(futures):
-                    call_count, done_count, link_count, note_count, failed = future.result()
-                    processed += done_count
-                    links_found += link_count
-                    notes_saved += note_count
-                    failures += failed
-                    if call_count == 0:
-                        deferred = True
+        active = {}
+        active_ids = set()
+        batch_number = 0
+        with ThreadPoolExecutor(max_workers=parallel_batches) as batch_pool:
+            while active or (calls < batch_size and not deferred):
+                if not deferred and not still_owns_lease():
+                    print("Local worker lost its queue lease; ending this pass.")
+                    deferred = True
 
-    process_waves(notes_only=False)
+                while len(active) < parallel_batches and calls < batch_size and not deferred:
+                    pending = (get_pending_notes(batch_size) if notes_only
+                               else get_pending_shorts(batch_size))
+                    available = [video for video in pending
+                                 if video["video_id"] not in active_ids]
+                    if not available:
+                        break
+                    batch = available[:min(videos_per_batch, batch_size - calls)]
+                    calls += len(batch)
+                    batch_number += 1
+                    video_ids = {video["video_id"] for video in batch}
+                    active_ids.update(video_ids)
+                    print(f"Starting local batch {batch_number} with {len(batch)} video(s)")
+
+                    def run_batch(videos):
+                        with ThreadPoolExecutor(max_workers=videos_per_batch) as video_pool:
+                            futures = [video_pool.submit(analyze_one, video, notes_only)
+                                       for video in videos]
+                            return [future.result() for future in as_completed(futures)]
+
+                    active[batch_pool.submit(run_batch, batch)] = video_ids
+
+                if not active:
+                    break
+
+                completed, _ = wait(active, return_when=FIRST_COMPLETED)
+                for future in completed:
+                    video_ids = active.pop(future)
+                    active_ids.difference_update(video_ids)
+                    print(f"Local batch completed ({len(video_ids)} video(s))")
+                    for call_count, done_count, link_count, note_count, failed in future.result():
+                        processed += done_count
+                        links_found += link_count
+                        notes_saved += note_count
+                        failures += failed
+                        if call_count == 0:
+                            deferred = True
+
+    process_batches(notes_only=False)
     if calls < batch_size and not deferred:
-        process_waves(notes_only=True)
+        process_batches(notes_only=True)
     return calls, processed, links_found, notes_saved, failures
+
+
+def process_local_parallel_batch(batch_size, parallelism, analyze_video, still_owns_lease):
+    """Compatibility wrapper for legacy single-wave local settings."""
+    return process_local_parallel_batches(
+        batch_size, parallel_batches=1, videos_per_batch=parallelism,
+        analyze_video=analyze_video, still_owns_lease=still_owns_lease,
+    )
 
 
 def parse_model_json(text):
@@ -640,10 +666,11 @@ def normalize_url(raw_url):
     parts = urlsplit(raw_url)
     if not parts.hostname:
         raise ValueError(f"URL has no hostname: {raw_url}")
-    host = parts.hostname.encode("idna").decode("ascii").lower()
+    host = parts.hostname.encode("idna").decode("ascii").lower().removeprefix("www.")
     if ":" in host and not host.startswith("["):
         host = f"[{host}]"
-    if parts.port:
+    if parts.port and not ((parts.scheme.lower() == "http" and parts.port == 80)
+                           or (parts.scheme.lower() == "https" and parts.port == 443)):
         host = f"{host}:{parts.port}"
     query = []
     for key, value in parse_qsl(parts.query, keep_blank_values=True):
@@ -651,9 +678,14 @@ def normalize_url(raw_url):
         if lowered.startswith(TRACKING_PREFIXES):
             continue
         query.append((key, value))
-    cleaned = urlunsplit((parts.scheme.lower(), host, parts.path.rstrip("/"),
+    query.sort()
+    scheme = parts.scheme.lower()
+    if scheme == "http":
+        scheme = "https"
+    path = parts.path.rstrip("/")
+    cleaned = urlunsplit((scheme, host, path,
                           urlencode(query, doseq=True), ""))
-    return cleaned, parts.hostname.lower()
+    return cleaned, parts.hostname.lower().removeprefix("www.")
 
 
 def omniroute_response_text(response):
@@ -793,10 +825,13 @@ def save_links(video_id, results):
         description = result.get("description", "")
         if not isinstance(description, str):
             description = str(description)
-        rows_by_url[url] = {
+        candidate = {
             "url": url, "domain": domain,
             "description": description.strip(), "category": category,
         }
+        existing = rows_by_url.get(url)
+        if existing is None or len(candidate["description"]) > len(existing["description"]):
+            rows_by_url[url] = candidate
     rows = list(rows_by_url.values())
     if not rows:
         print(f"No website URLs were extracted for {video_id}; keeping any existing links.")
@@ -943,9 +978,30 @@ def main():
             return True
         return renew_video_lease(lease_owner, lease_seconds)
 
+    local_parallel_batches = int(os.getenv("LOCAL_PARALLEL_BATCHES", "0"))
+    local_videos_per_batch = int(os.getenv("LOCAL_VIDEOS_PER_BATCH", "2"))
     local_parallelism = int(os.getenv("LOCAL_PARALLEL_CHANNELS", "0"))
+    if local_parallel_batches < 0:
+        raise ValueError("LOCAL_PARALLEL_BATCHES cannot be negative")
+    if local_videos_per_batch < 1:
+        raise ValueError("LOCAL_VIDEOS_PER_BATCH must be at least 1")
     if local_parallelism < 0:
         raise ValueError("LOCAL_PARALLEL_CHANNELS cannot be negative")
+    if local_parallel_batches and external_lease and provider == "omniroute":
+        calls, processed, links_found, notes_saved, failures = process_local_parallel_batches(
+            batch_size, local_parallel_batches, local_videos_per_batch,
+            analyze_video, still_owns_external_lease,
+        )
+        print("\nRun summary")
+        print(f"Upload video rows checked: {discovered_count}")
+        print(f"Videos started in this pass: {calls}; completed: {processed}")
+        print(f"Website links found and saved: {links_found}")
+        print(f"Notes found and saved: {notes_saved}")
+        print(f"Processing failures: {failures}")
+        print(f"Channel scan failures: {channel_errors}")
+        if failures or channel_errors:
+            sys.exit(1)
+        return
     if local_parallelism and external_lease and provider == "omniroute":
         calls, processed, links_found, notes_saved, failures = process_local_parallel_batch(
             batch_size, local_parallelism, analyze_video, still_owns_external_lease,

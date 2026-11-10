@@ -83,6 +83,8 @@ begin
   on conflict (url) do update
     set domain = excluded.domain,
         description = case when existing.manually_edited
+                           or length(coalesce(existing.description, '')) >=
+                              length(coalesce(excluded.description, ''))
                            then existing.description else excluded.description end,
         category = case when existing.manually_edited
                         then existing.category else excluded.category end;
