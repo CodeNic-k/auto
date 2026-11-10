@@ -79,12 +79,14 @@ specific text or action to enter, and the expected result. Visible Google
 queries become direct search links, labeled by their query; a bare Google
 homepage is not saved just because it appeared in the video. ChatGPT prompts
 and Hugging Face models/Spaces are described with the demonstrated inputs and
-steps. Notes are saved only for clear, informative lessons, useful tips, or
-reproducible workflows. Casual conversation, unsupported opinions, random facts
-with no explanatory or practical value, vague commentary, and pure promotion
-should produce no notes. Saved notes start with the main takeaway and give
-specific steps and expected results. The new "How-to & workflows" category
-groups step-based instructions, searches, and prompt-driven tasks.
+steps. Notes are saved only for clear, informative tips or lessons that stand on
+their own and are not instructions for the websites shown. Casual conversation,
+unsupported opinions, random facts with no explanatory or practical value, vague
+commentary, and pure promotion should produce no notes. Website-specific steps,
+prompts, searches, settings, and expected results belong in that website's description.
+A video showing multiple destinations gets a separate entry and description for each.
+The new "How-to & workflows" category groups step-based instructions, searches, and
+prompt-driven tasks.
 
 ## GitHub secrets
 
@@ -121,3 +123,9 @@ To refresh videos that contain YouTube, ChatGPT, Hugging Face, or Google links,
 review and run `supabase/requeue_selected_site_videos.sql`. It requeues the full
 videos, so the worker refreshes all links and notes attached to those videos,
 not only the matching site entries.
+
+To reprocess every Short that already has a website/search or note, review and run
+[`supabase/requeue_all_existing_content.sql`](supabase/requeue_all_existing_content.sql).
+Deploy the updated worker first. The script resets queue status for the matching Shorts;
+the worker then refreshes their website descriptions and notes. Replacement functions
+preserve manually edited or commented content.

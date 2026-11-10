@@ -34,7 +34,9 @@ ONLY one JSON object with this exact shape:
 }}
 
 WEBSITES: Capture each distinct website, page, and search that the video actually uses,
-shows, or recommends. Inspect the entire video, especially browser address bars, tabs,
+shows, or recommends. Create a separate entry for every distinct destination. Never
+combine different websites into one entry, and never put one site's instructions in
+another site's description. Inspect the entire video, especially browser address bars, tabs,
 page headers, app/site logos, visible text, QR codes, spoken site names, and call-to-action
 instructions. A complete URL is NOT required: if a hostname or domain is readable, save
 that host as a usable HTTPS URL even if the page path is hidden or cut off. If a URL is
@@ -49,9 +51,11 @@ Google search URL for it. Do not save a bare Google homepage just because Google
 on screen. If the query is unreadable, do not make one up. Keep different queries as
 separate entries, but include a repeated query only once.
 
-Every website description must make sense without replaying the video. State what the
-creator uses the site for, what the viewer should type/click/paste/upload/select, and
-what result to expect. For a search, quote the exact query and explain what it is meant
+Every website description must make sense without replaying the video and must describe
+only that entry's destination. Put that website's purpose, the viewer's steps, exact
+inputs, and expected result in its description. This is where all instructions for using
+that website belong, even when the video demonstrates a detailed workflow. For a search,
+quote the exact query and explain what it is meant
 to find. For ChatGPT, include the exact visible/spoken prompt or input when possible,
 what task it asks ChatGPT to do, and what output the video demonstrates. For Hugging
 Face, identify the shown model, Space, or resource and say what input/action produces
@@ -59,9 +63,11 @@ the demonstrated result. Use short labeled lines such as "Purpose:", "How to use
 and "Expected result:". If a detail is unreadable or not stated, say so briefly instead
 of filling it in. Do not write generic descriptions such as "AI tool" or "visit site".
 
-NOTES: Save only genuinely useful, informative takeaways that teach something a viewer
-can understand, remember, or apply. A website demo qualifies only when it shows a
-meaningful workflow, prompt, search, setting, or result that can be reproduced. Give each
+NOTES: Save only genuinely useful tips or lessons that stand on their own and are not
+instructions for using a website shown in the video. Do not repeat a website's purpose,
+steps, prompt, search, settings, or expected result in a note; put those in that site's
+website description instead. A video that only demonstrates one or more websites can
+have no notes. Give each
 note a concise, specific title. Format its detail with "Key takeaway:" first, then
 "Why it matters:". If the video demonstrates a procedure, add "Steps:" with numbered
 actions and finish with "Expected result:". Include exact inputs or wording shown. If
@@ -86,6 +92,11 @@ the hostname/domain is visible, save that host as its HTTPS URL. If a clearly id
 service is named or shown but its URL is hidden, use the official homepage only when its
 domain is unambiguous. Never invent a page path or guess an uncertain domain.
 
+Create one separate entry per distinct destination. Each description must cover only the
+website or search in that entry. Put its purpose, visible steps and exact inputs, and
+expected result in that website's description; never merge instructions for different
+sites into one entry.
+
 For every Google search, capture the exact readable query and set url to the direct Google
 search URL. If the query cannot be read, do not make one up. Do not omit an identified
 site just because the video does not display a complete URL. Return an empty array only
@@ -100,8 +111,11 @@ Watch the full YouTube video, including spoken audio and readable on-screen text
 ONLY one JSON object:
 {{"notes": [{{"title": "...", "detail": "...", "category": "..."}}]}}
 
-Save only genuinely useful, informative lessons, tips, or reproducible workflows, with a
-concise, specific title. Format each detail as "Key takeaway:" and "Why it matters:".
+Save only genuinely useful tips or lessons that stand on their own and are not instructions
+for using a website shown in the video. Never duplicate a website's purpose, steps, prompt,
+search, settings, or expected result as a note; those belong in that website's description.
+A video containing only website demonstrations can have no notes. Use a concise, specific
+title. Format each detail as "Key takeaway:" and "Why it matters:".
 When the video demonstrates a procedure, add "Steps:" with numbered actions and finish
 with "Expected result:". Include exact search text, prompts, model/resource names,
 settings, and inputs visible or spoken in the video. For ChatGPT, explain what to paste

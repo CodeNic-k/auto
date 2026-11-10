@@ -38,16 +38,8 @@
     .detail { margin:12px 0; color:#4e566e; white-space:pre-line; }
     .source { color:var(--muted); font-size:.9rem; text-decoration:none; }
     .message { border-style:dashed; color:var(--muted); text-align:center; }
-    .card.notes-open { display:grid; grid-column:1/-1; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:18px; }
     .website-main { display:flex; flex-direction:column; min-width:0; }
-    .related-notes { min-width:0; border-left:1px solid var(--line); padding-left:18px; }
-    .related-notes[hidden] { display:none; }
-    .related-notes h3 { margin:0 0 12px; font-size:1rem; }
-    .related-notes-toggle { align-self:flex-start; margin-top:12px; }
-    .related-note { padding:12px 0; border-top:1px solid var(--line); }
-    .related-note:first-of-type { border-top:0; padding-top:0; }
-    .related-note .detail { margin:8px 0; font-size:.94rem; }
-    @media(max-width:620px) { #results { grid-template-columns:1fr; } .card-top { flex-direction:column; } .controls { grid-template-columns:1fr; } .card.notes-open { grid-column:auto; grid-template-columns:1fr; } .related-notes { border-left:0; border-top:1px solid var(--line); padding:16px 0 0; } }
+    @media(max-width:620px) { #results { grid-template-columns:1fr; } .card-top { flex-direction:column; } .controls { grid-template-columns:1fr; } }
     .pagination { display:flex; align-items:center; justify-content:center; gap:12px; margin:22px 0 4px; }
     .pagination[hidden] { display:none; }
     .pagination button { min-height:40px; padding:8px 14px; border:1px solid var(--line); border-radius:10px; background:#fff; color:var(--ink); font:inherit; font-weight:650; cursor:pointer; }
@@ -78,9 +70,8 @@
     const intro = document.getElementById("intro"), countEl = document.getElementById("count");
     const resultsEl = document.getElementById("results"), searchEl = document.getElementById("search");
     const paginationEl = document.getElementById("pagination"), pageSizeEl = document.getElementById("page-size");
-    let rows = [], comments = new Map(), noteComments = new Map(), notesByVideo = new Map();
+    let rows = [], comments = new Map();
     let siteTools, page = 1, pageSize = 50;
-    const expandedNotes = new Set();
     label.textContent = isNotes ? "Notes category" : "Website category";
     heading.textContent = category || "Category not selected";
     intro.textContent = isNotes ? "Main ideas and steps from videos in this category." : "Actionable links and instructions from videos in this category.";
@@ -116,33 +107,6 @@
         next.addEventListener("click", () => { page++; render(); });
       }
     }
-    function appendRelatedNotes(card, main, item) {
-      const related = notesByVideo.get(item.video_id) || [];
-      if (!related.length) { card.appendChild(main); return; }
-      const expanded = expandedNotes.has(item.id);
-      const toggle = text(main, "button", `${expanded ? "Hide" : "Show"} related notes (${related.length})`, "tool-button related-notes-toggle");
-      toggle.type = "button"; toggle.setAttribute("aria-expanded", String(expanded));
-      toggle.addEventListener("click", () => {
-        if (expandedNotes.has(item.id)) expandedNotes.delete(item.id);
-        else expandedNotes.add(item.id);
-        render();
-      });
-      const panel = document.createElement("aside");
-      panel.className = "related-notes"; panel.hidden = !expanded;
-      panel.setAttribute("aria-label", "Related notes from this video");
-      text(panel, "h3", `Notes from this video (${related.length})`);
-      for (const note of related) {
-        const noteCard = document.createElement("section"); noteCard.className = "related-note";
-        const noteTop = document.createElement("div"); noteTop.className = "card-top";
-        text(noteTop, "strong", note.title, "title"); text(noteTop, "span", note.category || "Other", "badge");
-        noteCard.appendChild(noteTop);
-        const detail = text(noteCard, "p", note.detail, "detail");
-        siteTools.attach(noteCard, note, "note", detail, noteComments.get(`note:${note.id}`) || [], load);
-        panel.appendChild(noteCard);
-      }
-      card.classList.toggle("notes-open", expanded);
-      card.append(main, panel);
-    }
     function render() {
       pageSize = Number(pageSizeEl.value) || 50;
       const term = searchEl.value.trim().toLowerCase();
@@ -165,14 +129,14 @@
         source.href = `https://www.youtube.com/watch?v=${encodeURIComponent(item.video_id)}`; source.target = "_blank"; source.rel = "noopener noreferrer";
         siteTools.attach(main, item, isNotes ? "note" : "link", detail, comments.get(`${isNotes ? "note" : "link"}:${item.id}`) || [], load);
         if (isNotes) { card.appendChild(main); resultsEl.appendChild(card); }
-        else { appendRelatedNotes(card, main, item); resultsEl.appendChild(card); }
+        else { card.appendChild(main); resultsEl.appendChild(card); }
       }
     }
     async function load() {
       if (!category || !["notes", "websites"].includes(kind)) { countEl.textContent = "This category link is incomplete."; text(resultsEl, "div", "Open a category card from the Websites or Notes page.", "message"); return; }
       if (!window.supabase || !window.APP_SUPABASE_URL || !window.APP_SUPABASE_PUBLIC_KEY) { countEl.textContent = "Supabase configuration is missing."; return; }
       try {
-        rows = []; comments = new Map(); noteComments = new Map(); notesByVideo = new Map();
+        rows = []; comments = new Map();
         const db = window.supabase.createClient(window.APP_SUPABASE_URL, window.APP_SUPABASE_PUBLIC_KEY);
         const columns = isNotes ? "id,video_id,title,detail,category,created_at" : "id,video_id,url,domain,description,category,created_at";
         const size = 1000;
@@ -183,15 +147,6 @@
           if (error) throw error; rows.push(...data); if (data.length < size) break;
         }
         comments = await siteTools.loadComments(rows, isNotes ? "note" : "link");
-        if (!isNotes) {
-          const videoIds = [...new Set(rows.map(item => item.video_id))];
-          for (let from = 0; from < videoIds.length; from += 100) {
-            const { data, error } = await db.from("notes").select("id,video_id,title,detail,category,created_at").in("video_id", videoIds.slice(from, from + 100)).order("created_at", { ascending: false });
-            if (error) throw error; for (const note of data || []) { if (!notesByVideo.has(note.video_id)) notesByVideo.set(note.video_id, []); notesByVideo.get(note.video_id).push(note); }
-          }
-          const noteRows = [...notesByVideo.values()].flat();
-          noteComments = await siteTools.loadComments(noteRows, "note");
-        }
         render();
       } catch (error) {
         console.error(error); countEl.textContent = `Could not load this ${isNotes ? "notes" : "website"} category.`;

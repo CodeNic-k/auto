@@ -41,22 +41,14 @@
     .detail { margin:12px 0; color:#4e566e; white-space:pre-line; }
     .source { color:var(--muted); font-size:.9rem; text-decoration:none; }
     .message { border-style:dashed; color:var(--muted); text-align:center; }
-    .card.notes-open { display:grid; grid-column:1/-1; grid-template-columns:minmax(0,1fr) minmax(0,1fr); gap:18px; }
     .website-main { display:flex; flex-direction:column; min-width:0; }
-    .related-notes { min-width:0; border-left:1px solid var(--line); padding-left:18px; }
-    .related-notes[hidden] { display:none; }
-    .related-notes h3 { margin:0 0 12px; font-size:1rem; }
-    .related-notes-toggle { align-self:flex-start; margin-top:12px; }
-    .related-note { padding:12px 0; border-top:1px solid var(--line); }
-    .related-note:first-of-type { border-top:0; padding-top:0; }
-    .related-note .detail { margin:8px 0; font-size:.94rem; }
     .pagination { display:flex; align-items:center; justify-content:center; gap:12px; margin:22px 0 4px; }
     .pagination[hidden] { display:none; }
     .pagination button { min-height:40px; padding:8px 14px; border:1px solid var(--line); border-radius:10px; background:#fff; color:var(--ink); font:inherit; font-weight:650; cursor:pointer; }
     .pagination button:hover:not(:disabled) { border-color:var(--brand); color:var(--brand); }
     .pagination button:disabled { opacity:.45; cursor:not-allowed; }
     .pagination span { color:var(--muted); font-size:.92rem; }
-    @media(max-width:620px) { .controls { grid-template-columns:1fr; } #results { grid-template-columns:1fr; } .card-top { flex-direction:column; } .card.notes-open { grid-column:auto; grid-template-columns:1fr; } .related-notes { border-left:0; border-top:1px solid var(--line); padding:16px 0 0; } }
+    @media(max-width:620px) { .controls { grid-template-columns:1fr; } #results { grid-template-columns:1fr; } .card-top { flex-direction:column; } }
   </style>
 </head>
 <body>
@@ -94,7 +86,7 @@
     };
     const resultsEl=document.getElementById("results"), countEl=document.getElementById("count");
     const searchEl=document.getElementById("search"), filterEl=document.getElementById("category"),pageSizeEl=document.getElementById("page-size");
-    const categoryCards=document.getElementById("category-cards"),paginationEl=document.getElementById("pagination"); let rows=[],notes=[],comments=new Map(),noteComments=new Map(),notesByVideo=new Map(),sourceVideosByLink=new Map(),siteTools,page=1,pageSize=50;const expandedNotes=new Set();
+    const categoryCards=document.getElementById("category-cards"),paginationEl=document.getElementById("pagination"); let rows=[],comments=new Map(),sourceVideosByLink=new Map(),siteTools,page=1,pageSize=50;
     function text(parent,tag,value,className){const el=document.createElement(tag);el.textContent=value;if(className)el.className=className;parent.appendChild(el);return el;}
     function linkLabel(item){try{const url=new URL(item.url),host=url.hostname.toLowerCase().replace(/^www\./,"");const query=url.searchParams.get("q");if(query&&/^google\.[a-z]{2,3}(?:\.[a-z]{2})?$/.test(host))return `Google search: ${query}`;}catch{}return item.domain||item.url;}
     function render(){
@@ -106,26 +98,21 @@
       paginationEl.replaceChildren();paginationEl.hidden=pageCount<=1;
       if(pageCount>1){const previous=document.createElement("button");previous.type="button";previous.textContent="Previous";previous.disabled=page===1;previous.addEventListener("click",()=>{page--;render();});const status=document.createElement("span");status.textContent=`Page ${page} of ${pageCount}`;const next=document.createElement("button");next.type="button";next.textContent="Next";next.disabled=page===pageCount;next.addEventListener("click",()=>{page++;render();});paginationEl.append(previous,status,next);}
       if(!shown.length){text(resultsEl,"div",rows.length?"No websites match your search.":"No website links have been collected yet.","message");return;}
-      for(const item of shown){const card=document.createElement("article");card.className="card";if(expandedNotes.has(item.id))card.classList.add("notes-open");const websiteMain=document.createElement("div");websiteMain.className="website-main";const top=document.createElement("div");top.className="card-top";
+      for(const item of shown){const card=document.createElement("article");card.className="card";const websiteMain=document.createElement("div");websiteMain.className="website-main";const top=document.createElement("div");top.className="card-top";
         const a=text(top,"a",linkLabel(item),"url");a.href=item.url;a.target="_blank";a.rel="noopener noreferrer";
         text(top,"span",item.category||"Other","badge");websiteMain.appendChild(top);
         const detail=text(websiteMain,"p",item.description||"No description provided.","detail");
         const sourceVideos=sourceVideosByLink.get(item.id)||[item.video_id];
         const sourceList=text(websiteMain,"div","","source");
         for(const [index,videoId] of sourceVideos.entries()){if(index)sourceList.append(" · ");const source=text(sourceList,"a",sourceVideos.length>1?`Source video ${index+1} ↗`:"Watch source video ↗","source");source.href=`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;source.target="_blank";source.rel="noopener noreferrer";}
-        const related=sourceVideos.flatMap(videoId=>notesByVideo.get(videoId)||[]);
-        if(related.length){const toggle=text(websiteMain,"button",`${expandedNotes.has(item.id)?"Hide":"Show"} related notes (${related.length})`,"tool-button related-notes-toggle");toggle.type="button";toggle.setAttribute("aria-expanded",String(expandedNotes.has(item.id)));toggle.addEventListener("click",()=>{if(expandedNotes.has(item.id))expandedNotes.delete(item.id);else expandedNotes.add(item.id);render();});}
         siteTools.attach(websiteMain,item,"link",detail,comments.get(`link:${item.id}`)||[],load);
-        const notePanel=document.createElement("aside");notePanel.className="related-notes";notePanel.hidden=!expandedNotes.has(item.id);notePanel.setAttribute("aria-label","Related notes from this video");
-        text(notePanel,"h3",`Notes from related videos (${related.length})`);
-        for(const note of related){const noteCard=document.createElement("section");noteCard.className="related-note";const noteTop=document.createElement("div");noteTop.className="card-top";text(noteTop,"strong",note.title,"title");text(noteTop,"span",note.category||"Other","badge");noteCard.appendChild(noteTop);const noteDetail=text(noteCard,"p",note.detail,"detail");siteTools.attach(noteCard,note,"note",noteDetail,noteComments.get(`note:${note.id}`)||[],load);notePanel.appendChild(noteCard);}
-        card.append(websiteMain,notePanel);resultsEl.appendChild(card);
+        card.appendChild(websiteMain);resultsEl.appendChild(card);
       }
     }
     async function load(){
       if(!window.supabase||!window.APP_SUPABASE_URL||!window.APP_SUPABASE_PUBLIC_KEY){countEl.textContent="Supabase configuration is missing.";return;}
       try{
-        rows=[];notes=[];comments=new Map();noteComments=new Map();notesByVideo=new Map();sourceVideosByLink=new Map();
+        rows=[];comments=new Map();sourceVideosByLink=new Map();
         const db=window.supabase.createClient(window.APP_SUPABASE_URL,window.APP_SUPABASE_PUBLIC_KEY),size=1000;
         if(!siteTools){siteTools=window.createSiteTools(db);document.addEventListener("site-editor-change",render);}
         await siteTools.ready;
@@ -134,10 +121,6 @@
         for(const item of rows)sourceVideosByLink.set(item.id,[item.video_id]);
         const linkIds=rows.map(item=>item.id);
         for(let from=0;from<linkIds.length;from+=1000){const {data,error}=await db.from("link_sources").select("link_id,video_id").in("link_id",linkIds.slice(from,from+1000));if(error)throw error;for(const source of data){const sources=sourceVideosByLink.get(source.link_id)||[];if(!sources.includes(source.video_id))sources.push(source.video_id);sourceVideosByLink.set(source.link_id,sources);}}
-        const videoIds=[...new Set([...sourceVideosByLink.values()].flat())];
-        for(let from=0;from<videoIds.length;from+=100){const {data,error}=await db.from("notes").select("id,video_id,title,detail,category,created_at").in("video_id",videoIds.slice(from,from+100)).order("created_at",{ascending:false});if(error)throw error;notes.push(...data);}
-        noteComments=await siteTools.loadComments(notes,"note");
-        for(const note of notes){if(!notesByVideo.has(note.video_id))notesByVideo.set(note.video_id,[]);notesByVideo.get(note.video_id).push(note);}
         const counts=new Map();for(const item of rows){const c=item.category||"Other";counts.set(c,(counts.get(c)||0)+1);}
         categoryCards.replaceChildren();filterEl.replaceChildren();const all=document.createElement("option");all.value="";all.textContent="All categories";filterEl.appendChild(all);
         for(const [name,n] of [...counts].sort((a,b)=>a[0].localeCompare(b[0]))){const option=document.createElement("option");option.value=name;option.textContent=name;filterEl.appendChild(option);
