@@ -33,6 +33,10 @@ content refresh migration:
    and `videos` tables, preserves edited/commented rows during model refreshes,
    and installs editor-only update permissions. Whichever worker owns the lease
    processes the queue: OmniRoute locally or Gemini on GitHub when the local worker is off.
+4. [`supabase/global_website_dedup.sql`](supabase/global_website_dedup.sql) merges
+   existing exact-URL duplicates and makes each exact URL a single website entry.
+   It records every source video separately so each source's notes remain visible
+   from the website card. Run this migration after the preceding files.
 
 Existing links and notes remain visible until each video's new result is saved.
 
