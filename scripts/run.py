@@ -1,63 +1,101 @@
 """Find websites and useful notes in public YouTube Shorts."""
 
+import atexit
 import json
 import os
 import re
+import socket
 import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 import requests
-from google import genai
-from google.genai import types
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 
 CATEGORIES = {
     "AI tools", "Productivity", "Design", "Dev tools", "Privacy/Security",
-    "Free resources", "Learning", "Entertainment", "Other",
+    "Free resources", "Learning", "Entertainment", "How-to & workflows", "Other",
 }
 CATEGORY_TEXT = (
     "AI tools, Productivity, Design, Dev tools, Privacy/Security, Free resources, "
-    "Learning, Entertainment, Other"
+    "Learning, Entertainment, How-to & workflows, Other"
 )
 PROMPT = f"""
-Review this YouTube video and return ONLY one JSON object with this exact shape:
+Watch the full YouTube video, including spoken audio and readable on-screen text. Return
+ONLY one JSON object with this exact shape:
 {{
-  "websites": [{{"url": "...", "description": "...", "category": "..."}}],
-  "notes_eligible": true,
+  "websites": [{{"url": "...", "search_query": null, "description": "...", "category": "..."}}],
   "notes": [{{"title": "...", "detail": "...", "category": "..."}}]
 }}
 
-WEBSITES: list every website URL or domain actually shown or spoken. Do not guess.
-Use categories only from: {CATEGORY_TEXT}. Return [] if none.
+WEBSITES: Capture each distinct website, page, and search that the video actually uses,
+shows, or recommends. Prefer the exact page URL visible in the video. Never invent a URL.
+If a Google search bar is used, copy its exact readable query into search_query and make
+url a direct Google search URL for that query. Do not save a bare Google homepage just
+because Google appears on screen. If the query cannot be read, do not guess it or save a
+generic Google link. Keep different queries as separate entries, but include a repeated
+query only once.
 
-NOTES: save short, useful tips or techniques that the video teaches and a viewer could
-use. If the video mainly demonstrates, reviews, or recommends a website/app/service to
-send viewers to it, set notes_eligible to false and notes to []. Do not turn a website
-name, URL, or description of what a site does into a tip. For other videos with no useful
-tip, use notes: []. Use the same category list: {CATEGORY_TEXT}.
+Every website description must make sense without replaying the video. State what the
+creator uses the site for, what the viewer should type/click/paste/upload/select, and
+what result to expect. For a search, quote the exact query and explain what it is meant
+to find. For ChatGPT, include the exact visible/spoken prompt or input when possible,
+what task it asks ChatGPT to do, and what output the video demonstrates. For Hugging
+Face, identify the shown model, Space, or resource and say what input/action produces
+the demonstrated result. Use short labeled lines such as "Purpose:", "How to use it:",
+and "Expected result:". If a detail is unreadable or not stated, say so briefly instead
+of filling it in. Do not write generic descriptions such as "AI tool" or "visit site".
+
+NOTES: Save only genuinely useful, informative takeaways that teach something a viewer
+can understand, remember, or apply. A website demo qualifies only when it shows a
+meaningful workflow, prompt, search, setting, or result that can be reproduced. Give each
+note a concise, specific title. Format its detail with "Key takeaway:" first, then
+"Why it matters:". If the video demonstrates a procedure, add "Steps:" with numbered
+actions and finish with "Expected result:". Include exact inputs or wording shown. If
+there are no demonstrated steps, explain the useful concept or tip without inventing any.
+Do NOT create notes for casual conversation, personal opinions without a useful lesson,
+random facts with no practical or explanatory value, vague commentary, pure promotion,
+or a video that does not teach a clear takeaway. When there is no solid, useful takeaway,
+return notes: []. Never make up steps or claims to fill space.
+
+Use categories only from: {CATEGORY_TEXT}. Choose "How-to & workflows" when the main
+value is a sequence of actions, a search query, or a prompt-driven workflow; otherwise
+choose the closest topic category.
 """.strip()
 NOTES_PROMPT = f"""
-Extract useful tips or techniques this video teaches. Return ONLY one JSON object:
-{{"notes_eligible": true, "notes": [{{"title": "...", "detail": "...", "category": "..."}}]}}
+Watch the full YouTube video, including spoken audio and readable on-screen text. Return
+ONLY one JSON object:
+{{"notes": [{{"title": "...", "detail": "...", "category": "..."}}]}}
 
-If this video mainly demonstrates, reviews, or recommends a website/app/service to send
-viewers to it, set notes_eligible to false and notes to []. Do not turn a website name,
-URL, or description of what a site does into a tip. If there is no useful transferable
-tip, return notes: []. Allowed categories: {CATEGORY_TEXT}.
+Save only genuinely useful, informative lessons, tips, or reproducible workflows, with a
+concise, specific title. Format each detail as "Key takeaway:" and "Why it matters:".
+When the video demonstrates a procedure, add "Steps:" with numbered actions and finish
+with "Expected result:". Include exact search text, prompts, model/resource names,
+settings, and inputs visible or spoken in the video. For ChatGPT, explain what to paste
+and what it should produce. For Hugging Face, identify the shown model, Space, or
+resource and explain how to use it. If there are no demonstrated steps, explain the
+useful concept or tip without inventing any. Do not save casual conversation, unsupported
+personal opinions, random facts with no explanatory or practical value, vague commentary,
+pure promotion, or videos with no clear takeaway. If there is no solid useful lesson,
+return notes: []. Do not invent.
+
+Allowed categories: {CATEGORY_TEXT}. Use "How-to & workflows" when the main value is a
+sequence of actions, a search query, or a prompt-driven workflow; otherwise choose the
+closest topic category.
 """.strip()
 TRACKING_PREFIXES = ("utm_", "fbclid", "gclid", "dclid", "yclid", "mc_cid", "mc_eid")
 
 
-class RateLimited(Exception):
-    """Raised when every configured Gemini model/key combination is rate limited."""
+class RetryLater(Exception):
+    """Raised when a model provider is temporarily unavailable or rate limited."""
 
 
 def split_env_list(name, fallback_name=None):
-    """Read a comma- or newline-separated Actions variable/secret."""
+    """Read a comma- or newline-separated environment variable."""
     raw = os.getenv(name, "")
     if not raw and fallback_name:
         raw = os.getenv(fallback_name, "")
@@ -74,15 +112,39 @@ def required_env(name):
     return value
 
 
+def supabase_api_key():
+    """Read a backend-only Supabase secret, supporting both current and legacy names."""
+    value = (os.getenv("SUPABASE_SECRET_KEY") or os.getenv("SUPABASE_SERVICE_KEY") or "").strip()
+    if not value:
+        raise RuntimeError("Missing required environment variable: SUPABASE_SECRET_KEY (or SUPABASE_SERVICE_KEY)")
+    return value
+
+
+def supabase_auth_headers(api_key):
+    headers = {"apikey": api_key, "Content-Type": "application/json"}
+    # Supabase's newer opaque secret keys belong only in `apikey`; they are not JWTs.
+    if not api_key.startswith("sb_"):
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
+
+
+def assert_local_worker_lease():
+    if (os.getenv("VIDEO_WORKER_LEASE_HELD") or "").lower() != "true":
+        return
+    owner_id = required_env("VIDEO_WORKER_ID")
+    lease_seconds = int(os.getenv("VIDEO_WORKER_LEASE_SECONDS", "180"))
+    if not renew_video_lease(owner_id, lease_seconds):
+        raise RuntimeError("Local worker lost its queue lease; refusing to write to Supabase")
+
+
 def supabase_request(method, table, *, params=None, body=None, prefer=None):
-    """Make one PostgREST request using the private service key."""
+    """Make one PostgREST request using a backend-only Supabase key."""
     base_url = required_env("SUPABASE_URL").rstrip("/")
-    service_key = required_env("SUPABASE_SERVICE_KEY")
-    headers = {
-        "apikey": service_key,
-        "Authorization": f"Bearer {service_key}",
-        "Content-Type": "application/json",
-    }
+    service_key = supabase_api_key()
+    if (method.upper() in {"POST", "PATCH", "PUT", "DELETE"}
+            and (os.getenv("VIDEO_WORKER_LEASE_HELD") or "").lower() == "true"):
+        assert_local_worker_lease()
+    headers = supabase_auth_headers(service_key)
     if prefer:
         headers["Prefer"] = prefer
     response = requests.request(
@@ -104,6 +166,49 @@ def supabase_request(method, table, *, params=None, body=None, prefer=None):
     if not response.content:
         return []
     return response.json()
+
+
+def supabase_rpc(function, body):
+    """Call a privileged Supabase Postgres function through PostgREST."""
+    base_url = required_env("SUPABASE_URL").rstrip("/")
+    service_key = supabase_api_key()
+    if function in {"replace_video_links", "replace_video_notes"}:
+        assert_local_worker_lease()
+    response = requests.post(
+        f"{base_url}/rest/v1/rpc/{function}",
+        json=body,
+        headers=supabase_auth_headers(service_key),
+        timeout=30,
+    )
+    if not response.ok:
+        detail = response.text[:1000].strip()
+        raise RuntimeError(
+            f"Supabase RPC {function} failed with HTTP {response.status_code}: "
+            f"{detail or response.reason}"
+        )
+    if not response.content:
+        return None
+    return response.json()
+
+
+def try_acquire_video_lease(owner_id, lease_seconds):
+    return supabase_rpc("try_acquire_video_worker_lease", {
+        "p_owner_id": owner_id, "p_lease_seconds": lease_seconds,
+    }) is True
+
+
+def renew_video_lease(owner_id, lease_seconds):
+    return supabase_rpc("renew_video_worker_lease", {
+        "p_owner_id": owner_id, "p_lease_seconds": lease_seconds,
+    }) is True
+
+
+def release_video_lease(owner_id):
+    try:
+        return supabase_rpc("release_video_worker_lease", {"p_owner_id": owner_id}) is True
+    except Exception as exc:
+        print(f"Could not release processing lease; it will expire automatically: {exc}")
+        return False
 
 
 def read_handles():
@@ -254,28 +359,59 @@ def get_pending_notes(limit):
     )
 
 
-def get_response_text(response):
-    text = getattr(response, "text", None)
-    if text:
-        return text
-    raise ValueError("Gemini returned an empty response")
-
-
-def parse_gemini_json(text):
+def parse_model_json(text):
     text = text.strip()
     # Tolerate markdown code fences even though the prompt requests plain JSON.
     text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\s*```$", "", text)
     data = json.loads(text)
     if not isinstance(data, dict):
-        raise ValueError("Gemini response must be a JSON object")
+        raise ValueError("Model response must be a JSON object")
     if not isinstance(data.get("websites", []), list):
-        raise ValueError("Gemini websites field must be a JSON array")
+        raise ValueError("Model websites field must be a JSON array")
     if not isinstance(data.get("notes", []), list):
-        raise ValueError("Gemini notes field must be a JSON array")
-    if "notes_eligible" in data and not isinstance(data["notes_eligible"], bool):
-        raise ValueError("Gemini notes_eligible field must be true or false")
+        raise ValueError("Model notes field must be a JSON array")
     return data
+
+
+def gemini_call(clients, models, video_id, *, notes_only=False):
+    """Analyze a YouTube video with GitHub's Gemini fallback configuration."""
+    from google.genai import types
+
+    video_url = f"https://www.youtube.com/watch?v={video_id}"
+    prompt = NOTES_PROMPT if notes_only else PROMPT
+    errors = []
+    for model in models:
+        for client_index, client in enumerate(clients, start=1):
+            try:
+                response = client.models.generate_content(
+                    model=model,
+                    contents=[
+                        types.Part(file_data=types.FileData(file_uri=video_url)),
+                        types.Part(text=prompt),
+                    ],
+                    config=types.GenerateContentConfig(temperature=0),
+                )
+                response_text = getattr(response, "text", None)
+                if not response_text:
+                    raise ValueError("Gemini returned an empty response")
+                return parse_model_json(response_text)
+            except Exception as exc:
+                status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
+                message = str(exc)
+                rate_limited = (str(status) == "429" or "429" in message
+                                or "RESOURCE_EXHAUSTED" in message.upper()
+                                or "rate limit" in message.lower())
+                errors.append((model, client_index, rate_limited, message[:500]))
+                print(f"Gemini model {model} with key slot {client_index} failed: {message[:300]}")
+
+    if errors and all(item[2] for item in errors):
+        raise RetryLater("All configured Gemini models/keys are rate limited")
+    summary = "; ".join(
+        f"{model} (key slot {key_index}): {message}"
+        for model, key_index, _, message in errors
+    )
+    raise RuntimeError(f"All configured Gemini fallbacks failed: {summary}")
 
 
 def normalize_url(raw_url):
@@ -303,39 +439,6 @@ def normalize_url(raw_url):
     cleaned = urlunsplit((parts.scheme.lower(), host, parts.path.rstrip("/"),
                           urlencode(query, doseq=True), ""))
     return cleaned, parts.hostname.lower()
-
-
-def gemini_call(clients, models, video_id, *, notes_only=False):
-    video_url = f"https://www.youtube.com/watch?v={video_id}"
-    prompt = NOTES_PROMPT if notes_only else PROMPT
-    errors = []
-    for model in models:
-        for client_index, client in enumerate(clients, start=1):
-            try:
-                response = client.models.generate_content(
-                    model=model,
-                    contents=[
-                        types.Part(file_data=types.FileData(file_uri=video_url)),
-                        types.Part(text=prompt),
-                    ],
-                    config=types.GenerateContentConfig(temperature=0),
-                )
-                return parse_gemini_json(get_response_text(response))
-            except Exception as exc:
-                status = getattr(exc, "status_code", None) or getattr(exc, "code", None)
-                message = str(exc)
-                is_rate_limit = (str(status) == "429" or "429" in message
-                                 or "RESOURCE_EXHAUSTED" in message)
-                errors.append((model, client_index, is_rate_limit, message[:500]))
-                print(f"Gemini model {model} with key slot {client_index} failed; trying fallback: {message[:300]}")
-
-    if errors and all(item[2] for item in errors):
-        raise RateLimited("All configured model/key combinations were rate limited")
-    summary = "; ".join(
-        f"{model} (key slot {key_index}): {message}"
-        for model, key_index, _, message in errors
-    )
-    raise RuntimeError(f"All configured Gemini fallbacks failed: {summary}")
 
 
 def omniroute_response_text(response):
@@ -375,7 +478,7 @@ def omniroute_call(api_key, base_url, models, video_id, *, notes_only=False):
                     "temperature": 0,
                     "stream": False,
                 },
-                timeout=180,
+                timeout=(8, 180),
             )
             if not response.ok:
                 detail = response.text[:500].strip()
@@ -383,47 +486,61 @@ def omniroute_call(api_key, base_url, models, video_id, *, notes_only=False):
                     f"HTTP {response.status_code}: {detail or response.reason}",
                     response=response,
                 )
-            return parse_gemini_json(omniroute_response_text(response.json()))
+            return parse_model_json(omniroute_response_text(response.json()))
         except Exception as exc:
             status = getattr(getattr(exc, "response", None), "status_code", None)
             message = str(exc)
-            is_rate_limit = (str(status) == "429" or "429" in message
-                             or "rate limit" in message.lower()
-                             or "quota" in message.lower())
-            errors.append((model, is_rate_limit, message[:500]))
-            print(f"OmniRoute model {model} failed; trying fallback: {message[:300]}")
+            retryable = (
+                isinstance(exc, (requests.ConnectionError, requests.Timeout))
+                or status in {408, 425, 429, "408", "425", "429"}
+                or (isinstance(status, int) and status >= 500)
+                or "rate limit" in message.lower()
+                or "quota" in message.lower()
+            )
+            errors.append((model, retryable, message[:500]))
+            print(f"OmniRoute model {model} failed: {message[:300]}")
 
     if errors and all(item[1] for item in errors):
-        raise RateLimited("All configured OmniRoute models were rate limited")
+        summary = "; ".join(f"{model}: {message}" for model, _, message in errors)
+        raise RetryLater(f"OmniRoute is unavailable or rate limited: {summary}")
     summary = "; ".join(f"{model}: {message}" for model, _, message in errors)
     raise RuntimeError(f"All configured OmniRoute fallbacks failed: {summary}")
 
 
+def is_google_host(host):
+    host = (host or "").lower().removeprefix("www.")
+    return re.fullmatch(r"google\.[a-z]{2,3}(?:\.[a-z]{2})?", host) is not None
+
+
 def save_links(video_id, results):
-    rows = []
+    rows_by_url = {}
     for result in results:
         if not isinstance(result, dict):
             raise ValueError("Each JSON array item must be an object")
-        url, domain = normalize_url(result.get("url", ""))
+        raw_url = result.get("url", "")
+        search_query = result.get("search_query")
+        url, domain = normalize_url(raw_url)
+        if isinstance(search_query, str) and search_query.strip() and is_google_host(domain):
+            raw_url = "https://www.google.com/search?" + urlencode({"q": search_query.strip()})
+            url, domain = normalize_url(raw_url)
         category = result.get("category", "Other")
         if not isinstance(category, str) or category not in CATEGORIES:
             category = "Other"
         description = result.get("description", "")
         if not isinstance(description, str):
             description = str(description)
-        rows.append({"video_id": video_id, "url": url, "domain": domain,
-                     "description": description.strip(), "category": category})
-    if rows:
-        supabase_request(
-            "POST", "links", params={"on_conflict": "video_id,url"}, body=rows,
-            prefer="resolution=ignore-duplicates,return=minimal",
-        )
+        rows_by_url[url] = {
+            "url": url, "domain": domain,
+            "description": description.strip(), "category": category,
+        }
+    rows = list(rows_by_url.values())
+    supabase_rpc("replace_video_links", {"p_video_id": video_id, "p_rows": rows})
     return len(rows)
 
 
 def save_notes(video_id, results):
     """Save short takeaways, ignoring duplicate titles from the same video."""
-    rows = []
+    rows_by_title = {}
     for result in results:
         if not isinstance(result, dict):
             raise ValueError("Each note must be a JSON object")
@@ -436,13 +553,11 @@ def save_notes(video_id, results):
             raise ValueError("Each note needs a non-empty detail")
         if not isinstance(category, str) or category not in CATEGORIES:
             category = "Other"
-        rows.append({"video_id": video_id, "title": title.strip(),
-                     "detail": detail.strip(), "category": category})
-    if rows:
-        supabase_request(
-            "POST", "notes", params={"on_conflict": "video_id,title"}, body=rows,
-            prefer="resolution=ignore-duplicates,return=minimal",
-        )
+        rows_by_title[title.strip()] = {
+            "title": title.strip(), "detail": detail.strip(), "category": category,
+        }
+    rows = list(rows_by_title.values())
+    supabase_rpc("replace_video_notes", {"p_video_id": video_id, "p_rows": rows})
     return len(rows)
 
 
@@ -470,9 +585,9 @@ def main():
     mode = (os.getenv("RUN_MODE") or "all").strip().lower()
     if mode not in {"all", "discover", "process"}:
         raise ValueError("RUN_MODE must be 'discover', 'process', or 'all'")
-    # Check Supabase secrets before spending API quota.
+    # Check Supabase credentials before starting work.
     required_env("SUPABASE_URL")
-    required_env("SUPABASE_SERVICE_KEY")
+    supabase_api_key()
 
     discovered_count = 0
     channel_errors = 0
@@ -504,20 +619,24 @@ def main():
             sys.exit(1)
         return
 
-    provider = (os.getenv("AI_PROVIDER") or "gemini").strip().lower()
-    if provider == "gemini":
-        gemini_keys = split_env_list("GEMINI_API_KEYS", "GEMINI_API_KEY")
-        if not gemini_keys:
-            raise RuntimeError("Missing required environment variable: GEMINI_API_KEYS (or GEMINI_API_KEY)")
-        models = split_env_list("GEMINI_MODELS", "GEMINI_MODEL")
-        if not models:
-            raise RuntimeError("Missing required environment variable: GEMINI_MODELS (or GEMINI_MODEL)")
-        gemini_clients = [genai.Client(api_key=key) for key in gemini_keys]
+    lease_owner = (os.getenv("VIDEO_WORKER_ID") or
+                   f"{socket.gethostname()}-{uuid.uuid4().hex[:12]}")
+    external_lease = (os.getenv("VIDEO_WORKER_LEASE_HELD") or "").lower() == "true"
+    lease_seconds = int(os.getenv(
+        "VIDEO_WORKER_LEASE_SECONDS", "180" if external_lease else "4200"
+    ))
+    if external_lease:
+        if not renew_video_lease(lease_owner, lease_seconds):
+            print("Local worker no longer owns the processing lease; skipping this pass.")
+            return
+    else:
+        if not try_acquire_video_lease(lease_owner, lease_seconds):
+            print("Another worker owns the processing lease; skipping this pass.")
+            return
+        atexit.register(release_video_lease, lease_owner)
 
-        def analyze_video(video_id, *, notes_only=False):
-            return gemini_call(gemini_clients, models, video_id, notes_only=notes_only)
-
-    elif provider == "omniroute":
+    provider = (os.getenv("AI_PROVIDER") or "omniroute").strip().lower()
+    if provider == "omniroute":
         omniroute_api_key = required_env("OMNIROUTE_API_KEY")
         omniroute_base_url = required_env("OMNIROUTE_BASE_URL")
         models = split_env_list("OMNIROUTE_MODELS", "OMNIROUTE_MODEL")
@@ -526,13 +645,24 @@ def main():
 
         def analyze_video(video_id, *, notes_only=False):
             return omniroute_call(
-                omniroute_api_key, omniroute_base_url, models, video_id,
-                notes_only=notes_only,
+                omniroute_api_key, omniroute_base_url, models,
+                video_id, notes_only=notes_only,
             )
+    elif provider == "gemini":
+        from google import genai
 
+        gemini_keys = split_env_list("GEMINI_API_KEYS", "GEMINI_API_KEY")
+        if not gemini_keys:
+            raise RuntimeError("Missing required environment variable: GEMINI_API_KEYS (or GEMINI_API_KEY)")
+        models = split_env_list("GEMINI_MODELS", "GEMINI_MODEL")
+        if not models:
+            raise RuntimeError("Missing required environment variable: GEMINI_MODELS (or GEMINI_MODEL)")
+        clients = [genai.Client(api_key=key) for key in gemini_keys]
+
+        def analyze_video(video_id, *, notes_only=False):
+            return gemini_call(clients, models, video_id, notes_only=notes_only)
     else:
-        raise ValueError("AI_PROVIDER must be 'gemini' or 'omniroute'")
-
+        raise ValueError("AI_PROVIDER must be 'omniroute' or 'gemini'")
     print(f"AI provider: {provider}; model(s): {', '.join(models)}")
 
     batch_size = int(os.getenv("BATCH_SIZE", "5"))
@@ -540,7 +670,7 @@ def main():
         raise ValueError("BATCH_SIZE must be at least 1")
     pending = get_pending_shorts(batch_size)
     calls = processed = links_found = notes_saved = failures = 0
-    rate_limited = False
+    deferred = False
 
     def prepare_model_call():
         nonlocal calls
@@ -548,15 +678,26 @@ def main():
             time.sleep(4)
         calls += 1
 
+    def still_owns_external_lease():
+        if not external_lease:
+            return True
+        return renew_video_lease(lease_owner, lease_seconds)
+
     # New pending Shorts get one model call that extracts links and notes together.
     for video in pending:
         video_id = video["video_id"]
+        if not still_owns_external_lease():
+            print("Local worker lost its queue lease; ending this pass.")
+            return
         prepare_model_call()
         try:
             result = analyze_video(video_id)
-        except RateLimited as exc:
-            print(f"{provider} rate limit reached; stopping cleanly. {exc}")
-            rate_limited = True
+            if not still_owns_external_lease():
+                print("Local worker lost its queue lease during the model request; discarding the result.")
+                return
+        except RetryLater as exc:
+            print(f"{provider} is unavailable or rate limited; leaving this video pending: {exc}")
+            deferred = True
             break
         except Exception as exc:
             failures += 1
@@ -579,7 +720,7 @@ def main():
             continue
 
         try:
-            note_items = result.get("notes", []) if result.get("notes_eligible", True) else []
+            note_items = result.get("notes", [])
             video_notes = save_notes(video_id, note_items)
             update_video(video_id, {
                 "notes_status": "done", "notes_error_message": None,
@@ -594,16 +735,22 @@ def main():
 
     # Backfill existing, link-processed Shorts without reprocessing their links.
     remaining = batch_size - calls
-    if remaining > 0 and not rate_limited:
+    if remaining > 0 and not deferred:
         old_notes = get_pending_notes(remaining)
         for video in old_notes:
             video_id = video["video_id"]
+            if not still_owns_external_lease():
+                print("Local worker lost its queue lease; ending this pass.")
+                return
             prepare_model_call()
             try:
                 result = analyze_video(video_id, notes_only=True)
-            except RateLimited as exc:
-                print(f"{provider} rate limit reached; stopping cleanly. {exc}")
-                rate_limited = True
+                if not still_owns_external_lease():
+                    print("Local worker lost its queue lease during the model request; discarding the result.")
+                    return
+            except RetryLater as exc:
+                print(f"{provider} is unavailable or rate limited; leaving notes pending: {exc}")
+                deferred = True
                 break
             except Exception as exc:
                 failures += 1
@@ -613,7 +760,7 @@ def main():
             processed += 1
 
             try:
-                note_items = result.get("notes", []) if result.get("notes_eligible", True) else []
+                note_items = result.get("notes", [])
                 video_notes = save_notes(video_id, note_items)
                 update_video(video_id, {
                     "notes_status": "done", "notes_error_message": None,
@@ -628,13 +775,12 @@ def main():
 
     print("\nRun summary")
     print(f"Upload video rows checked: {discovered_count}")
-    print(f"{provider} video calls completed: {processed}")
+    print(f"Video model calls completed: {processed}")
     print(f"Website links found and saved: {links_found}")
     print(f"Notes found and saved: {notes_saved}")
     print(f"Processing failures: {failures}")
     print(f"Channel scan failures: {channel_errors}")
-    # Mark the Actions run red only after all queued work has been attempted,
-    # so a bad video never prevents the rest of the batch from being processed.
+    # Report a failed pass after the rest of the available batch is attempted.
     if failures or channel_errors:
         sys.exit(1)
 

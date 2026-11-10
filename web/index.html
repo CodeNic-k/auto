@@ -34,7 +34,7 @@
     .url { overflow-wrap:anywhere; color:var(--brand); font-size:1.08rem; font-weight:700; text-decoration:none; }
     .url:hover,.source:hover { text-decoration:underline; }
     .badge { flex:0 0 auto; padding:4px 9px; border-radius:99px; background:#f0efff; color:#4438bd; font-size:.76rem; font-weight:700; }
-    .detail { margin:12px 0; color:#4e566e; }
+    .detail { margin:12px 0; color:#4e566e; white-space:pre-line; }
     .source { color:var(--muted); font-size:.9rem; text-decoration:none; }
     .message { border-style:dashed; color:var(--muted); text-align:center; }
     @media(max-width:620px) { .controls { grid-template-columns:1fr; } .card-top { flex-direction:column; } }
@@ -46,7 +46,7 @@
     <header>
       <div class="eyebrow">A collection of useful finds</div>
       <h1>Websites from Shorts</h1>
-      <p class="intro">Browse websites spotted or mentioned in YouTube Shorts. Search by domain or description, or open a category below.</p>
+      <p class="intro">Find the exact searches, prompts, and steps shown in each video, with enough context to use them without replaying it.</p>
     </header>
     <section aria-labelledby="categories-heading">
       <h2 id="categories-heading">Website categories</h2>
@@ -66,19 +66,21 @@
       "AI tools":"Artificial intelligence websites and apps", "Productivity":"Tools for getting work done",
       "Design":"Visual design and creative tools", "Dev tools":"Software development tools",
       "Privacy/Security":"Privacy, safety, and security tools", "Free resources":"Free downloads and useful resources",
-      "Learning":"Courses, explainers, and learning tools", "Entertainment":"Games and entertainment", "Other":"Other useful websites"
+      "Learning":"Courses, explainers, and learning tools", "Entertainment":"Games and entertainment",
+      "How-to & workflows":"Searches, prompts, and step-by-step tasks", "Other":"Other useful websites"
     };
     const resultsEl=document.getElementById("results"), countEl=document.getElementById("count");
     const searchEl=document.getElementById("search"), filterEl=document.getElementById("category");
     const categoryCards=document.getElementById("category-cards"); let rows=[];
     function text(parent,tag,value,className){const el=document.createElement(tag);el.textContent=value;if(className)el.className=className;parent.appendChild(el);return el;}
+    function linkLabel(item){try{const url=new URL(item.url),host=url.hostname.toLowerCase().replace(/^www\./,"");const query=url.searchParams.get("q");if(query&&/^google\.[a-z]{2,3}(?:\.[a-z]{2})?$/.test(host))return `Google search: ${query}`;}catch{}return item.domain||item.url;}
     function render(){
       const term=searchEl.value.trim().toLowerCase(),cat=filterEl.value;
       const shown=rows.filter(x=>(!cat||x.category===cat)&&(!term||[x.url,x.domain,x.description,x.category].join(" ").toLowerCase().includes(term)));
       resultsEl.replaceChildren();countEl.textContent=`${shown.length} ${shown.length===1?"website":"websites"}`;
       if(!shown.length){text(resultsEl,"div",rows.length?"No websites match your search.":"No website links have been collected yet.","message");return;}
       for(const item of shown){const card=document.createElement("article");card.className="card";const top=document.createElement("div");top.className="card-top";
-        const a=text(top,"a",item.domain||item.url,"url");a.href=item.url;a.target="_blank";a.rel="noopener noreferrer";
+        const a=text(top,"a",linkLabel(item),"url");a.href=item.url;a.target="_blank";a.rel="noopener noreferrer";
         text(top,"span",item.category||"Other","badge");card.appendChild(top);
         text(card,"p",item.description||"No description provided.","detail");
         const source=text(card,"a","Watch source video ↗","source");source.href=`https://www.youtube.com/watch?v=${encodeURIComponent(item.video_id)}`;source.target="_blank";source.rel="noopener noreferrer";resultsEl.appendChild(card);

@@ -1,8 +1,7 @@
-name: Process pending videos
+name: Process pending videos with Gemini
 
 on:
-  # Keep checking the pending queue. If one run times out, a later scheduled run
-  # starts from the rows that are still pending in Supabase.
+  # GitHub is the fallback processor when the local PC worker is not running.
   schedule:
     - cron: "*/15 * * * *"
   workflow_dispatch:
@@ -34,19 +33,17 @@ jobs:
           python-version: "3.11"
 
       - name: Install Python packages
-        run: python -m pip install -r requirements.txt
+        run: python -m pip install -r requirements.txt -r requirements-github.txt
 
-      - name: Process pending videos
+      - name: Process pending videos with Gemini
         run: python scripts/run.py
         env:
           RUN_MODE: process
-          AI_PROVIDER: ${{ vars.AI_PROVIDER || 'gemini' }}
-          OMNIROUTE_BASE_URL: ${{ vars.OMNIROUTE_BASE_URL }}
-          OMNIROUTE_API_KEY: ${{ secrets.OMNIROUTE_API_KEY }}
-          OMNIROUTE_MODELS: ${{ vars.OMNIROUTE_MODELS }}
+          AI_PROVIDER: gemini
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_API_KEYS: ${{ secrets.GEMINI_API_KEYS }}
           GEMINI_MODELS: ${{ vars.GEMINI_MODELS || secrets.GEMINI_MODEL }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           BATCH_SIZE: ${{ github.event.inputs.batch_size || '5' }}

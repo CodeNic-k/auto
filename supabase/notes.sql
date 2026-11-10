@@ -34,7 +34,7 @@ create table if not exists public.notes (
     check (category in (
       'AI tools', 'Productivity', 'Design', 'Dev tools',
       'Privacy/Security', 'Free resources', 'Learning',
-      'Entertainment', 'Other'
+      'Entertainment', 'How-to & workflows', 'Other'
     )),
   created_at timestamptz not null default now(),
   unique (video_id, title)

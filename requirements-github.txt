@@ -1,0 +1,2 @@
+# Installed only by the GitHub-hosted Gemini fallback workflow.
+google-genai>=1.0.0,<2.0.0
