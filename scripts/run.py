@@ -46,10 +46,15 @@ shown but its address is not visible, include its official homepage only when yo
 the official domain with high confidence. Never invent a deep link or guess an uncertain
 domain. Do not return an empty websites array merely because no full URL was spoken aloud.
 
-For Google searches, copy the exact readable query into search_query and make url a direct
-Google search URL for it. Do not save a bare Google homepage just because Google appears
-on screen. If the query is unreadable, do not make one up. Keep different queries as
-separate entries, but include a repeated query only once.
+For Google searches, save a query only when the video clearly demonstrates that search
+(the exact query is visibly entered/submitted or its results are actively used) or the
+creator explicitly tells viewers to search that exact query. Copy the exact readable query
+into search_query and make url a direct Google search URL for it. Never invent a query by
+turning words from narration or unrelated on-screen text into a search. Ignore incidental
+background tabs, joke searches, and unrelated queries unless the creator deliberately
+uses them as part of the video's point or demonstration. Do not save a bare Google homepage
+just because Google appears on screen. If the query is unreadable, do not make one up.
+Keep distinct demonstrated queries as separate entries, but include a repeated query once.
 
 Every website description must make sense without replaying the video and must describe
 only that entry's destination. Put that website's purpose, the viewer's steps, exact
@@ -97,10 +102,14 @@ website or search in that entry. Put its purpose, visible steps and exact inputs
 expected result in that website's description; never merge instructions for different
 sites into one entry.
 
-For every Google search, capture the exact readable query and set url to the direct Google
-search URL. If the query cannot be read, do not make one up. Do not omit an identified
-site just because the video does not display a complete URL. Return an empty array only
-after checking the whole video and finding no identifiable websites or search actions.
+For Google searches, include only a clearly demonstrated search (the exact query is visibly
+entered/submitted or its results are actively used) or a query the creator explicitly tells
+viewers to search. Capture its exact readable query and set url to the direct Google search
+URL. Do not infer a query from narration or unrelated text; ignore incidental background
+tabs, joke searches, and unrelated queries unless the creator deliberately uses them in the
+demonstration. If the query cannot be read, do not make one up. Do not omit an identified
+website just because the video does not display a complete URL. Return an empty array only
+after checking the whole video and finding no identifiable websites or qualifying searches.
 
 For each entry, explain the site's purpose, the input/action demonstrated, and the
 expected result. Include exact prompts, search terms, model/resource names, and steps

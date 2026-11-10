@@ -76,8 +76,9 @@ worker starts again.
 
 Each website description now explains the video's purpose for that site, the
 specific text or action to enter, and the expected result. Visible Google
-queries become direct search links, labeled by their query; a bare Google
-homepage is not saved just because it appeared in the video. ChatGPT prompts
+clearly demonstrated or explicitly requested Google queries become direct search links,
+labeled by their query; queries inferred from narration and incidental background tabs are
+ignored, and a bare Google homepage is not saved just because it appeared in the video. ChatGPT prompts
 and Hugging Face models/Spaces are described with the demonstrated inputs and
 steps. Notes are saved only for clear, informative tips or lessons that stand on
 their own and are not instructions for the websites shown. Casual conversation,
