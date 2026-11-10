@@ -20,15 +20,14 @@ content refresh migration:
 1. [`supabase/worker_lease.sql`](supabase/worker_lease.sql) creates the shared
    worker lease so two local workers cannot process the queue at once.
 2. [`supabase/content_quality.sql`](supabase/content_quality.sql) adds the
-   "How-to & workflows" category, installs safe content-replacement functions,
-   and requeues existing Shorts for refreshed descriptions and notes. Whichever
-   worker owns the lease will process the queue: OmniRoute locally or Gemini on
-   GitHub when the local worker is unavailable.
+   "How-to & workflows" category and installs the content-replacement functions.
+3. [`supabase/site_collaboration.sql`](supabase/site_collaboration.sql) enables
+   saved comments and owner-only edits. It requires the existing `links`, `notes`,
+   and `videos` tables, preserves edited/commented rows during model refreshes,
+   and installs editor-only update permissions. Whichever worker owns the lease
+   processes the queue: OmniRoute locally or Gemini on GitHub when the local worker is off.
 
-The second migration reprocesses all rows marked as Shorts. Their old links and
-notes remain visible until each video's new result is saved; then the new rows
-replace the old ones atomically. The local worker uses OmniRoute while it holds
-the lease. When that worker is off, GitHub uses Gemini to drain the same queue.
+Existing links and notes remain visible until each video's new result is saved.
 
 ## Set up the local worker
 
@@ -83,3 +82,24 @@ the local worker explicitly selects OmniRoute.
 Keep local OmniRoute and Supabase keys in `.env.local` or a private secret
 store; `.env.local` is ignored by Git. Supabase secret/service-role keys have
 elevated database access.
+
+## Enable your editor account
+
+1. In Supabase **Authentication → Users**, create your email/password account.
+   Leave public sign-up disabled if you do not want visitors creating accounts.
+2. In the SQL Editor, run this allowlist statement with the account email you
+   created:
+
+   ```sql
+   insert into public.site_editors (user_id)
+   select id from auth.users where email = 'you@example.com'
+   on conflict (user_id) do nothing;
+   ```
+3. Sign in on the Websites or Notes page. Only allowlisted accounts see the
+   Edit controls. Anyone can post comments; comments and site content have no
+   delete controls.
+
+To refresh videos that contain Google links, review and run
+`supabase/requeue_google_videos.sql`. It requeues the full videos, so the worker
+refreshes all links and notes attached to those videos, not only their Google
+entries.

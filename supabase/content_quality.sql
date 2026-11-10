@@ -113,14 +113,4 @@ revoke all on function public.replace_video_notes(text, jsonb) from public, anon
 grant execute on function public.replace_video_links(text, jsonb) to service_role;
 grant execute on function public.replace_video_notes(text, jsonb) to service_role;
 
--- Rebuild saved summaries/descriptions for existing Shorts using the new prompts.
-update public.videos
-   set status = 'pending',
-       error_message = null,
-       processed_at = null,
-       notes_status = 'pending',
-       notes_error_message = null,
-       notes_processed_at = null
- where is_short is true;
-
 notify pgrst, 'reload schema';
