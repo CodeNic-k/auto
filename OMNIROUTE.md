@@ -92,7 +92,8 @@ elevated database access.
 1. In Supabase **Authentication → Users**, create your email/password account.
    Leave public sign-up disabled if you do not want visitors creating accounts.
 2. In the SQL Editor, run this allowlist statement with the account email you
-   created:
+   created, or use [`supabase/add_site_editor.sql`](supabase/add_site_editor.sql)
+   after replacing its example address:
 
    ```sql
    insert into public.site_editors (user_id)

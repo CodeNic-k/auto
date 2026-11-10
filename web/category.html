@@ -22,8 +22,9 @@
     input { width:100%; min-height:48px; margin:18px 0 10px; padding:10px 13px; border:1px solid var(--line); border-radius:12px; background:#fff; color:var(--ink); font:inherit; }
     input:focus { outline:3px solid #5548d933; border-color:var(--brand); }
     .count { color:var(--muted); font-size:.92rem; }
-    #results { display:grid; gap:12px; }
+    #results { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,390px),1fr)); align-items:stretch; gap:14px; }
     .card,.message { padding:19px; border:1px solid var(--line); border-radius:16px; background:#fff; box-shadow:0 3px 14px #20243a08; }
+    .card { display:flex; flex-direction:column; min-width:0; }
     .card-top { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
     .title,.url { overflow-wrap:anywhere; font-size:1.08rem; font-weight:750; }
     .url { color:var(--brand); text-decoration:none; }
@@ -32,7 +33,7 @@
     .detail { margin:12px 0; color:#4e566e; white-space:pre-line; }
     .source { color:var(--muted); font-size:.9rem; text-decoration:none; }
     .message { border-style:dashed; color:var(--muted); text-align:center; }
-    @media(max-width:620px) { .card-top { flex-direction:column; } }
+    @media(max-width:620px) { #results { grid-template-columns:1fr; } .card-top { flex-direction:column; } }
   </style>
 </head>
 <body>
