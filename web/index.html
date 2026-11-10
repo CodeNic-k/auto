@@ -112,7 +112,7 @@
         const detail=text(websiteMain,"p",item.description||"No description provided.","detail");
         const source=text(websiteMain,"a","Watch source video ↗","source");source.href=`https://www.youtube.com/watch?v=${encodeURIComponent(item.video_id)}`;source.target="_blank";source.rel="noopener noreferrer";
         const related=notesByVideo.get(item.video_id)||[];
-        if(related.length){const toggle=text(websiteMain,"button",`${expandedNotes.has(item.id)?"Hide":"Show"} related notes (${related.length})","tool-button related-notes-toggle");toggle.type="button";toggle.setAttribute("aria-expanded",String(expandedNotes.has(item.id)));toggle.addEventListener("click",()=>{if(expandedNotes.has(item.id))expandedNotes.delete(item.id);else expandedNotes.add(item.id);render();});}
+        if(related.length){const toggle=text(websiteMain,"button",`${expandedNotes.has(item.id)?"Hide":"Show"} related notes (${related.length})`,"tool-button related-notes-toggle");toggle.type="button";toggle.setAttribute("aria-expanded",String(expandedNotes.has(item.id)));toggle.addEventListener("click",()=>{if(expandedNotes.has(item.id))expandedNotes.delete(item.id);else expandedNotes.add(item.id);render();});}
         siteTools.attach(websiteMain,item,"link",detail,comments.get(`link:${item.id}`)||[],load);
         const notePanel=document.createElement("aside");notePanel.className="related-notes";notePanel.hidden=!expandedNotes.has(item.id);notePanel.setAttribute("aria-label","Related notes from this video");
         text(notePanel,"h3",`Notes from this video (${related.length})`);
