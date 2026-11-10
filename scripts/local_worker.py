@@ -47,6 +47,9 @@ def main_loop():
     # This worker must never fall back to Gemini, even if a developer has that
     # variable set in their shell environment.
     os.environ["AI_PROVIDER"] = "omniroute"
+    # Local passes process one queued video per channel concurrently. The
+    # GitHub workflow does not set this local-only option and stays sequential.
+    os.environ.setdefault("LOCAL_PARALLEL_CHANNELS", "4")
     os.environ.setdefault("OMNIROUTE_BASE_URL", "http://127.0.0.1:20128/v1")
     required_env("SUPABASE_URL")
     supabase_api_key()

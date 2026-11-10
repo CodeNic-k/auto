@@ -8,6 +8,7 @@ import socket
 import sys
 import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -346,6 +347,17 @@ def get_pending_shorts(batch_size):
     )
 
 
+def get_pending_shorts_for_channel(handle):
+    return supabase_request(
+        "GET", "videos", params={
+            "select": "video_id,channel_handle,title,duration_seconds",
+            "status": "eq.pending", "is_short": "eq.true",
+            "channel_handle": f"eq.{handle}",
+            "order": "video_id.asc", "limit": "1",
+        },
+    )
+
+
 def get_pending_notes(limit):
     """Find previously link-processed Shorts that still need note analysis."""
     if limit < 1:
@@ -357,6 +369,124 @@ def get_pending_notes(limit):
             "is_short": "eq.true", "order": "video_id.asc", "limit": str(limit),
         },
     )
+
+
+def get_pending_notes_for_channel(handle):
+    return supabase_request(
+        "GET", "videos", params={
+            "select": "video_id,channel_handle,title,duration_seconds",
+            "status": "neq.pending", "notes_status": "eq.pending",
+            "is_short": "eq.true", "channel_handle": f"eq.{handle}",
+            "order": "video_id.asc", "limit": "1",
+        },
+    )
+
+
+def process_local_parallel_batch(batch_size, parallelism, analyze_video, still_owns_lease):
+    """Process one video per configured channel concurrently, in bounded waves."""
+    handles = read_handles()
+    if not handles:
+        return 0, 0, 0, 0, 0
+    parallelism = min(parallelism, len(handles))
+    calls = processed = links_found = notes_saved = failures = 0
+    deferred = False
+
+    def analyze_one(video, notes_only):
+        video_id = video["video_id"]
+        if not still_owns_lease():
+            return 0, 0, 0, 0, True
+        try:
+            result = analyze_video(video_id, notes_only=notes_only)
+            if not still_owns_lease():
+                print(f"Lost local queue lease during analysis of {video_id}; discarding result.")
+                return 0, 0, 0, 0, True
+        except RetryLater as exc:
+            print(f"OmniRoute is unavailable or rate limited; leaving {video_id} pending: {exc}")
+            return 0, 0, 0, 0, True
+        except Exception as exc:
+            if notes_only:
+                mark_notes_failed(video_id, exc)
+            else:
+                mark_failed(video_id, exc)
+            print(f"Video {video_id} failed; it will not block other channels: {exc}")
+            return 1, 0, 0, 0, 1
+
+        if notes_only:
+            try:
+                count = save_notes(video_id, result.get("notes", []))
+                update_video(video_id, {
+                    "notes_status": "done", "notes_error_message": None,
+                    "notes_processed_at": datetime.now(timezone.utc).isoformat(),
+                })
+                print(f"Notes done {video_id}: {count} note(s)")
+                return 1, 1, 0, count, False
+            except Exception as exc:
+                mark_notes_failed(video_id, exc)
+                print(f"Saving notes for {video_id} failed: {exc}")
+                return 1, 1, 0, 0, 1
+
+        try:
+            link_count = save_links(video_id, result.get("websites", []))
+            update_video(video_id, {
+                "status": "done", "error_message": None,
+                "processed_at": datetime.now(timezone.utc).isoformat(),
+            })
+        except Exception as exc:
+            mark_failed(video_id, exc)
+            print(f"Saving websites for {video_id} failed: {exc}")
+            return 1, 1, 0, 0, 1
+
+        try:
+            note_count = save_notes(video_id, result.get("notes", []))
+            update_video(video_id, {
+                "notes_status": "done", "notes_error_message": None,
+                "notes_processed_at": datetime.now(timezone.utc).isoformat(),
+            })
+            print(f"Done {video_id}: {link_count} website(s), {note_count} note(s)")
+            return 1, 1, link_count, note_count, False
+        except Exception as exc:
+            mark_notes_failed(video_id, exc)
+            print(f"Website scan done for {video_id}; saving notes failed: {exc}")
+            return 1, 1, link_count, 0, 1
+
+    def process_waves(notes_only):
+        nonlocal calls, processed, links_found, notes_saved, failures, deferred
+        offset = 0
+        while calls < batch_size and not deferred:
+            if not still_owns_lease():
+                print("Local worker lost its queue lease; ending this pass.")
+                deferred = True
+                return
+            ordered_handles = handles[offset:] + handles[:offset]
+            wave = []
+            for handle in ordered_handles:
+                if len(wave) >= min(parallelism, batch_size - calls):
+                    break
+                pending = (get_pending_notes_for_channel(handle) if notes_only
+                           else get_pending_shorts_for_channel(handle))
+                if pending:
+                    wave.append(pending[0])
+            if not wave:
+                return
+            offset = (offset + len(wave)) % len(handles)
+            if calls:
+                time.sleep(4)
+            calls += len(wave)
+            with ThreadPoolExecutor(max_workers=parallelism) as pool:
+                futures = [pool.submit(analyze_one, video, notes_only) for video in wave]
+                for future in as_completed(futures):
+                    call_count, done_count, link_count, note_count, failed = future.result()
+                    processed += done_count
+                    links_found += link_count
+                    notes_saved += note_count
+                    failures += failed
+                    if call_count == 0:
+                        deferred = True
+
+    process_waves(notes_only=False)
+    if calls < batch_size and not deferred:
+        process_waves(notes_only=True)
+    return calls, processed, links_found, notes_saved, failures
 
 
 def parse_model_json(text):
@@ -668,6 +798,30 @@ def main():
     batch_size = int(os.getenv("BATCH_SIZE", "5"))
     if batch_size < 1:
         raise ValueError("BATCH_SIZE must be at least 1")
+
+    def still_owns_external_lease():
+        if not external_lease:
+            return True
+        return renew_video_lease(lease_owner, lease_seconds)
+
+    local_parallelism = int(os.getenv("LOCAL_PARALLEL_CHANNELS", "0"))
+    if local_parallelism < 0:
+        raise ValueError("LOCAL_PARALLEL_CHANNELS cannot be negative")
+    if local_parallelism and external_lease and provider == "omniroute":
+        calls, processed, links_found, notes_saved, failures = process_local_parallel_batch(
+            batch_size, local_parallelism, analyze_video, still_owns_external_lease,
+        )
+        print("\nRun summary")
+        print(f"Upload video rows checked: {discovered_count}")
+        print(f"Video model calls attempted: {calls}; completed: {processed}")
+        print(f"Website links found and saved: {links_found}")
+        print(f"Notes found and saved: {notes_saved}")
+        print(f"Processing failures: {failures}")
+        print(f"Channel scan failures: {channel_errors}")
+        if failures or channel_errors:
+            sys.exit(1)
+        return
+
     pending = get_pending_shorts(batch_size)
     calls = processed = links_found = notes_saved = failures = 0
     deferred = False
@@ -677,11 +831,6 @@ def main():
         if calls:
             time.sleep(4)
         calls += 1
-
-    def still_owns_external_lease():
-        if not external_lease:
-            return True
-        return renew_video_lease(lease_owner, lease_seconds)
 
     # New pending Shorts get one model call that extracts links and notes together.
     for video in pending:

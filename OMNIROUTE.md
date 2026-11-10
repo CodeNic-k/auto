@@ -4,8 +4,12 @@ When your PC worker is running, it discovers recent uploads from `channels.txt`
 and processes the shared Supabase queue using OmniRoute only. The local worker
 checks up to 50 recent uploads per channel hourly by default; change
 `LOCAL_DISCOVERY_INTERVAL_SECONDS` or `DISCOVERY_LIMIT` in `.env.local` if you
-want a different cadence or scan size. The daily GitHub discovery workflow also
-checks channels. GitHub's separate processor uses Gemini every 15 minutes when
+want a different cadence or scan size. It processes up to four videos at once,
+choosing one pending video from each of four configured channels per wave.
+`BATCH_SIZE` is the total number of model calls in a pass; `LOCAL_PARALLEL_CHANNELS`
+sets the number of simultaneous channel slots. GitHub's Gemini processor remains
+sequential and does not use the local parallel setting. The daily GitHub discovery
+workflow also checks channels. GitHub's separate processor uses Gemini every 15 minutes when
 it can acquire the queue lease, so pending items can be processed while your PC
 is off. The local worker never switches to Gemini.
 
