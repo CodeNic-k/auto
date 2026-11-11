@@ -808,6 +808,39 @@ def is_google_host(host):
     return re.fullmatch(r"google\.[a-z]{2,3}(?:\.[a-z]{2})?", host) is not None
 
 
+GOOGLE_QUERY_STOP_WORDS = {
+    "a", "an", "and", "app", "best", "com", "find", "for", "free",
+    "google", "how", "in", "official", "of", "on", "search", "site",
+    "the", "to", "tool", "use", "website", "with",
+}
+
+
+def google_search_terms(url):
+    parts = urlsplit(url)
+    if (not is_google_host(parts.hostname)
+            or parts.path.rstrip("/").lower() != "/search"):
+        return set()
+    query = dict(parse_qsl(parts.query, keep_blank_values=True)).get("q", "")
+    terms = {
+        word for word in re.findall(r"[a-z0-9]+", query.lower())
+        if len(word) >= 3 and word not in GOOGLE_QUERY_STOP_WORDS
+    }
+    # A single specific brand name (for example, "chatgpt") can identify a
+    # destination. Very short one-word queries are too ambiguous to remove.
+    if len(terms) == 1 and len(next(iter(terms))) < 6:
+        return set()
+    return terms
+
+
+def destination_site_terms(row):
+    parts = urlsplit(row["url"])
+    text = " ".join((row.get("domain", ""), parts.hostname or "", parts.path))
+    return {
+        word for word in re.findall(r"[a-z0-9]+", text.lower())
+        if len(word) >= 3 and word not in {"www", "com", "org", "net", "app", "html", "htm"}
+    }
+
+
 def save_links(video_id, results):
     rows_by_url = {}
     for result in results:
@@ -832,6 +865,19 @@ def save_links(video_id, results):
         existing = rows_by_url.get(url)
         if existing is None or len(candidate["description"]) > len(existing["description"]):
             rows_by_url[url] = candidate
+    # Remove a Google search only when its meaningful query words all identify
+    # another URL's host/path from this same video. Distinct search workflows
+    # and unrelated website URLs are retained.
+    destination_rows = [row for row in rows_by_url.values()
+                        if not is_google_host(row["domain"])]
+    redundant_search_urls = set()
+    for url, row in rows_by_url.items():
+        terms = google_search_terms(url)
+        if terms and any(terms.issubset(destination_site_terms(destination))
+                         for destination in destination_rows):
+            redundant_search_urls.add(url)
+    for url in redundant_search_urls:
+        del rows_by_url[url]
     rows = list(rows_by_url.values())
     if not rows:
         print(f"No website URLs were extracted for {video_id}; keeping any existing links.")

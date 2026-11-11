@@ -43,8 +43,12 @@ content refresh migration:
    It records every source video separately so each source's notes remain visible
    from the website card. Run this migration after the preceding files.
 5. [`supabase/normalize_website_urls.sql`](supabase/normalize_website_urls.sql) merges
-   older `http`, `www`, and trailing-slash variants. Run it after the global dedup
-   migration, then requeue the affected Shorts if their descriptions need refreshing.
+   older `http`, `www`, and trailing-slash variants across the whole links table.
+   It removes a Google search only when the meaningful search words all match a
+   destination link's host or path for the same video. Different URLs from one
+   video remain; manually edited and commented entries are preserved. Run it
+   after the global dedup migration. Its final result reports removed searches
+   and the remaining global duplicate count.
 
 Existing links and notes remain visible until each video's new result is saved.
 
