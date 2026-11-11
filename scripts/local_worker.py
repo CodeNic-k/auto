@@ -37,6 +37,9 @@ def load_local_env():
         value = value.strip()
         if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
             value = value[1:-1]
+        else:
+            # Match common .env behavior: an unquoted inline # starts a comment.
+            value = value.split("#", 1)[0].rstrip()
         if name and name not in os.environ:
             os.environ[name] = value
 

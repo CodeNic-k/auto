@@ -37,6 +37,7 @@ window.createSiteTools = function createSiteTools(db) {
     .tag-chip:hover{border-color:#aaa4f5;background:#efedff}
     .tag-pending{color:#866318;background:#fff9e9;border-color:#f3e4b7}
     .tag-add{display:flex;flex-wrap:wrap;align-items:center;gap:7px;flex:1 0 100%}
+    .tag-add[hidden]{display:none}
     .tag-add input{width:min(100%,220px);min-height:36px;padding:6px 10px;border:1px solid #dfe2ec;border-radius:9px;font:inherit}
     .tag-moderation{display:inline-flex;gap:4px;margin-left:4px}
     .tag-moderation button{padding:1px 5px;border:1px solid #e4dfca;border-radius:6px;background:#fff;font:inherit;font-size:.75rem;cursor:pointer}
@@ -215,6 +216,7 @@ window.createSiteTools = function createSiteTools(db) {
     }
     const form = document.createElement("form");
     form.className = "tag-add";
+    form.hidden = true;
     const input = document.createElement("input");
     input.maxLength = 40;
     input.minLength = 2;
@@ -226,7 +228,27 @@ window.createSiteTools = function createSiteTools(db) {
     submit.type = "submit";
     submit.className = "tool-button";
     submit.textContent = canEdit ? "Add tag" : "Suggest tag";
-    form.append(input, submit, status);
+    const toggle = document.createElement("button");
+    toggle.type = "button";
+    toggle.className = "tool-button";
+    toggle.textContent = canEdit ? "Add tag" : "Suggest tag";
+    toggle.setAttribute("aria-expanded", "false");
+    toggle.addEventListener("click", () => {
+      form.hidden = !form.hidden;
+      toggle.setAttribute("aria-expanded", String(!form.hidden));
+      if (!form.hidden) input.focus();
+    });
+    const cancel = document.createElement("button");
+    cancel.type = "button";
+    cancel.className = "tool-button";
+    cancel.textContent = "Cancel";
+    cancel.addEventListener("click", () => {
+      form.hidden = true;
+      toggle.setAttribute("aria-expanded", "false");
+      status.textContent = "";
+      input.value = "";
+    });
+    form.append(input, submit, cancel);
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const tag = input.value.trim().replace(/\s+/g, " ");
@@ -243,8 +265,10 @@ window.createSiteTools = function createSiteTools(db) {
       if (!canEdit) status.textContent = "Thanks. Your tag will appear after an editor reviews it.";
       else await onChanged();
       input.value = "";
+      form.hidden = true;
+      toggle.setAttribute("aria-expanded", "false");
     });
-    area.appendChild(form);
+    area.append(toggle, form, status);
     parent.appendChild(area);
   }
 
