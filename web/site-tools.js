@@ -32,6 +32,14 @@ window.createSiteTools = function createSiteTools(db) {
     .comment p{margin:3px 0 0}
     .comment-form{display:grid;gap:9px;padding-top:12px;border-top:1px solid #e8eaf1}
     .comment-form input:focus,.comment-form textarea:focus,.edit-panel input:focus,.edit-panel textarea:focus,.auth-panel input:focus{outline:3px solid #5548d922;border-color:#766de0}
+    .tag-area{display:flex;flex-wrap:wrap;align-items:center;gap:7px;margin:4px 0 12px}
+    .tag-chip{display:inline-flex;align-items:center;gap:5px;padding:4px 9px;border:1px solid #e4e2fb;border-radius:999px;background:#f6f5ff;color:#4438bd;font-size:.82rem;text-decoration:none}
+    .tag-chip:hover{border-color:#aaa4f5;background:#efedff}
+    .tag-pending{color:#866318;background:#fff9e9;border-color:#f3e4b7}
+    .tag-add{display:flex;flex-wrap:wrap;align-items:center;gap:7px;flex:1 0 100%}
+    .tag-add input{width:min(100%,220px);min-height:36px;padding:6px 10px;border:1px solid #dfe2ec;border-radius:9px;font:inherit}
+    .tag-moderation{display:inline-flex;gap:4px;margin-left:4px}
+    .tag-moderation button{padding:1px 5px;border:1px solid #e4dfca;border-radius:6px;background:#fff;font:inherit;font-size:.75rem;cursor:pointer}
     .tool-message[data-error="true"]{color:#a12626}
     @media(max-width:620px){.site-auth{margin-left:0;width:100%}}
   `;
@@ -151,6 +159,93 @@ window.createSiteTools = function createSiteTools(db) {
       }
     }
     return grouped;
+  }
+
+  async function loadTags(rows) {
+    const grouped = new Map();
+    const ids = rows.map((row) => row.id).filter((id) => id !== null && id !== undefined);
+    for (let offset = 0; offset < ids.length; offset += 500) {
+      const { data, error } = await db.from("link_tags")
+        .select("id,link_id,tag,source,status,created_at")
+        .in("link_id", ids.slice(offset, offset + 500))
+        .order("tag", { ascending: true });
+      if (error) throw error;
+      for (const entry of data || []) {
+        if (!grouped.has(entry.link_id)) grouped.set(entry.link_id, []);
+        grouped.get(entry.link_id).push(entry);
+      }
+    }
+    return grouped;
+  }
+
+  function attachTags(parent, item, tags, onChanged) {
+    const area = document.createElement("div");
+    area.className = "tag-area";
+    const status = document.createElement("span");
+    status.className = "tool-message";
+    for (const entry of tags || []) {
+      if (entry.status === "approved") {
+        const chip = document.createElement("a");
+        chip.className = "tag-chip";
+        chip.textContent = `#${entry.tag}`;
+        chip.href = `./index.html?tag=${encodeURIComponent(entry.tag)}`;
+        chip.title = `Find websites tagged ${entry.tag}`;
+        area.appendChild(chip);
+      } else if (canEdit && entry.status === "pending") {
+        const chip = document.createElement("span");
+        chip.className = "tag-chip tag-pending";
+        chip.textContent = `Pending: ${entry.tag}`;
+        const controls = document.createElement("span");
+        controls.className = "tag-moderation";
+        for (const [label, next] of [["Approve", "approved"], ["Reject", "rejected"]]) {
+          const action = document.createElement("button");
+          action.type = "button";
+          action.textContent = label;
+          action.addEventListener("click", async () => {
+            action.disabled = true;
+            const { error } = await db.from("link_tags").update({ status: next }).eq("id", entry.id);
+            if (error) { action.disabled = false; status.dataset.error = "true"; status.textContent = error.message; }
+            else await onChanged();
+          });
+          controls.appendChild(action);
+        }
+        chip.appendChild(controls);
+        area.appendChild(chip);
+      }
+    }
+    const form = document.createElement("form");
+    form.className = "tag-add";
+    const input = document.createElement("input");
+    input.maxLength = 40;
+    input.minLength = 2;
+    input.pattern = "[A-Za-z0-9][A-Za-z0-9 &._+-]{1,39}";
+    input.placeholder = "Add a tag";
+    input.setAttribute("aria-label", "Suggest a website tag");
+    input.required = true;
+    const submit = document.createElement("button");
+    submit.type = "submit";
+    submit.className = "tool-button";
+    submit.textContent = canEdit ? "Add tag" : "Suggest tag";
+    form.append(input, submit, status);
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const tag = input.value.trim().replace(/\s+/g, " ");
+      const duplicate = (tags || []).some((entry) => entry.tag.toLowerCase() === tag.toLowerCase());
+      if (duplicate) { status.textContent = "That tag already exists or has already been reviewed."; return; }
+      submit.disabled = true;
+      status.dataset.error = "false";
+      status.textContent = canEdit ? "Adding tag…" : "Sending suggestion…";
+      const { error } = await db.from("link_tags").insert({
+        link_id: item.id, tag, source: "user", status: canEdit ? "approved" : "pending",
+      });
+      submit.disabled = false;
+      if (error) { status.dataset.error = "true"; status.textContent = error.message || "Could not save this tag."; return; }
+      if (!canEdit) status.textContent = "Thanks. Your tag will appear after an editor reviews it.";
+      else await onChanged();
+      input.value = "";
+    });
+    area.appendChild(form);
+    parent.appendChild(area);
   }
 
   function message(parent, value, isError = false) {
@@ -329,5 +424,5 @@ window.createSiteTools = function createSiteTools(db) {
     card.append(actions, section);
   }
 
-  return { ready, loadComments, attach };
+  return { ready, loadComments, loadTags, attachTags, attach };
 };

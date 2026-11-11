@@ -29,7 +29,7 @@ PROMPT = f"""
 Watch the full YouTube video, including spoken audio and readable on-screen text. Return
 ONLY one JSON object with this exact shape:
 {{
-  "websites": [{{"url": "...", "search_query": null, "description": "...", "category": "..."}}],
+  "websites": [{{"url": "...", "search_query": null, "description": "...", "category": "...", "tags": ["tag one", "tag two"]}}],
   "notes": [{{"title": "...", "detail": "...", "category": "..."}}]
 }}
 
@@ -84,6 +84,10 @@ random facts with no practical or explanatory value, vague commentary, pure prom
 or a video that does not teach a clear takeaway. When there is no solid, useful takeaway,
 return notes: []. Never make up steps or claims to fill space.
 
+For every website, add 2–6 concise topic/use-case tags based only on the demonstrated site
+and description. Do not invent features or use vague tags such as "website". Return tags
+as an array of strings; do not repeat the category as a tag.
+
 Use categories only from: {CATEGORY_TEXT}. Choose "How-to & workflows" when the main
 value is a sequence of actions, a search query, or a prompt-driven workflow; otherwise
 choose the closest topic category.
@@ -91,7 +95,7 @@ choose the closest topic category.
 LINKS_ONLY_PROMPT = f"""
 Watch the entire video again and focus only on finding every website, app/site, and search
 the creator uses, shows, names, or tells the viewer to open. Return ONLY this JSON:
-{{"websites": [{{"url": "...", "search_query": null, "description": "...", "category": "..."}}]}}
+{{"websites": [{{"url": "...", "search_query": null, "description": "...", "category": "...", "tags": ["tag one", "tag two"]}}]}}
 
 Inspect all frames, including address bars, browser tabs, page titles, logos, QR codes,
 overlays, readable text, and spoken instructions. A complete URL is NOT required. If only
@@ -117,7 +121,8 @@ search entry; keep it when the search itself is part of the useful workflow.
 
 For each entry, explain the site's purpose, the input/action demonstrated, and the
 expected result. Include exact prompts, search terms, model/resource names, and steps
-that are visible or spoken. Use categories only from: {CATEGORY_TEXT}.
+that are visible or spoken. Add 2–6 concise tags for the demonstrated topic and use case;
+do not invent features or use vague tags. Use categories only from: {CATEGORY_TEXT}.
 """.strip()
 NOTES_PROMPT = f"""
 Watch the full YouTube video, including spoken audio and readable on-screen text. Return
@@ -688,6 +693,27 @@ def normalize_url(raw_url):
     return cleaned, parts.hostname.lower().removeprefix("www.")
 
 
+def normalize_tags(raw_tags):
+    """Validate and deduplicate model-suggested website tags."""
+    if not isinstance(raw_tags, list):
+        return []
+    tags = []
+    seen = set()
+    for raw_tag in raw_tags:
+        if not isinstance(raw_tag, str):
+            continue
+        tag = re.sub(r"\s+", " ", raw_tag).strip()
+        if not 2 <= len(tag) <= 40 or not re.fullmatch(r"[\w][\w &.+-]*", tag, re.UNICODE):
+            continue
+        key = tag.casefold()
+        if key not in seen:
+            seen.add(key)
+            tags.append(tag)
+        if len(tags) == 8:
+            break
+    return tags
+
+
 def omniroute_response_text(response):
     """Extract assistant text from an OpenAI-compatible OmniRoute response."""
     try:
@@ -861,10 +887,15 @@ def save_links(video_id, results):
         candidate = {
             "url": url, "domain": domain,
             "description": description.strip(), "category": category,
+            "tags": normalize_tags(result.get("tags", [])),
         }
         existing = rows_by_url.get(url)
         if existing is None or len(candidate["description"]) > len(existing["description"]):
+            if existing:
+                candidate["tags"] = normalize_tags(existing["tags"] + candidate["tags"])
             rows_by_url[url] = candidate
+        elif existing:
+            existing["tags"] = normalize_tags(existing["tags"] + candidate["tags"])
     # Remove a Google search only when its meaningful query words all identify
     # another URL's host/path from this same video. Distinct search workflows
     # and unrelated website URLs are retained.
@@ -883,6 +914,10 @@ def save_links(video_id, results):
         print(f"No website URLs were extracted for {video_id}; keeping any existing links.")
         return 0
     supabase_rpc("replace_video_links", {"p_video_id": video_id, "p_rows": rows})
+    supabase_rpc("replace_video_link_tags", {
+        "p_video_id": video_id,
+        "p_rows": [{"url": row["url"], "tags": row["tags"]} for row in rows],
+    })
     return len(rows)
 
 

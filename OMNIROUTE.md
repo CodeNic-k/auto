@@ -50,6 +50,17 @@ content refresh migration:
    after the global dedup migration. Its final result reports removed searches
    and the remaining global duplicate count.
 
+6. [`supabase/website_tags.sql`](supabase/website_tags.sql) adds multiple tags per website,
+   public tag suggestions, and editor approval. It depends on the collaboration and global
+   website dedup migrations. Run it after `normalize_website_urls.sql`.
+
+After deploying the updated worker and applying `website_tags.sql`, run
+[`supabase/requeue_all_existing_content.sql`](supabase/requeue_all_existing_content.sql)
+to reprocess existing websites and generate their initial tags. The worker preserves
+approved and pending user tags while adding newly generated tags. Visitors can suggest tags;
+allowlisted editors can approve or reject suggestions from the website cards. Approved tags
+are searchable and filterable alongside website address, description, and category.
+
 Existing links and notes remain visible until each video's new result is saved.
 
 ## Set up the local worker

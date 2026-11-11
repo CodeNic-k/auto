@@ -20,7 +20,7 @@
     h1 { margin:8px 0; font-size:clamp(2rem,6vw,3.1rem); line-height:1.08; letter-spacing:-.04em; }
     h2 { margin:28px 0 12px; font-size:1.2rem; }
     .intro { margin:0; max-width:680px; color:var(--muted); }
-    .controls { display:grid; grid-template-columns:minmax(0,1fr) minmax(190px,230px) minmax(145px,165px); gap:12px; margin:22px 0 10px; }
+    .controls { display:grid; grid-template-columns:minmax(0,1fr) minmax(155px,190px) minmax(155px,190px) minmax(145px,165px); gap:12px; margin:22px 0 10px; }
     .page-size-control { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:.9rem; }
     .page-size-control select { min-width:76px; }
     input,select { width:100%; min-height:48px; padding:10px 13px; border:1px solid var(--line); border-radius:12px; background:white; color:var(--ink); font:inherit; }
@@ -67,6 +67,7 @@
       <div class="controls">
         <input id="search" type="search" placeholder="Search websites…" aria-label="Search websites">
         <select id="category" aria-label="Filter by category"><option value="">All categories</option></select>
+        <select id="tag-filter" aria-label="Filter by tag"><option value="">All tags</option></select>
         <label class="page-size-control" for="page-size">Per page
           <select id="page-size" aria-label="Websites per page"><option value="20">20</option><option value="50" selected>50</option><option value="100">100</option><option value="1000">1000</option></select>
         </label>
@@ -85,13 +86,13 @@
       "How-to & workflows":"Searches, prompts, and step-by-step tasks", "Other":"Other useful websites"
     };
     const resultsEl=document.getElementById("results"), countEl=document.getElementById("count");
-    const searchEl=document.getElementById("search"), filterEl=document.getElementById("category"),pageSizeEl=document.getElementById("page-size");
-    const categoryCards=document.getElementById("category-cards"),paginationEl=document.getElementById("pagination"); let rows=[],comments=new Map(),sourceVideosByLink=new Map(),siteTools,page=1,pageSize=50;
+    const searchEl=document.getElementById("search"), filterEl=document.getElementById("category"),tagFilterEl=document.getElementById("tag-filter"),pageSizeEl=document.getElementById("page-size");
+    const categoryCards=document.getElementById("category-cards"),paginationEl=document.getElementById("pagination"); let rows=[],comments=new Map(),tagsByLink=new Map(),sourceVideosByLink=new Map(),siteTools,page=1,pageSize=50;
     function text(parent,tag,value,className){const el=document.createElement(tag);el.textContent=value;if(className)el.className=className;parent.appendChild(el);return el;}
     function linkLabel(item){try{const url=new URL(item.url),host=url.hostname.toLowerCase().replace(/^www\./,"");const query=url.searchParams.get("q");if(query&&/^google\.[a-z]{2,3}(?:\.[a-z]{2})?$/.test(host))return `Google search: ${query}`;}catch{}return item.domain||item.url;}
     function render(){
-      const term=searchEl.value.trim().toLowerCase(),cat=filterEl.value;
-      const matched=rows.filter(x=>(!cat||x.category===cat)&&(!term||[x.url,x.domain,x.description,x.category].join(" ").toLowerCase().includes(term)));
+      const term=searchEl.value.trim().toLowerCase(),cat=filterEl.value,tag=tagFilterEl.value;
+      const matched=rows.filter(x=>{const tags=tagsByLink.get(x.id)||[];return (!cat||x.category===cat)&&(!tag||tags.some(t=>t.status==="approved"&&t.tag.toLowerCase()===tag.toLowerCase()))&&(!term||[x.url,x.domain,x.description,x.category,...tags.filter(t=>t.status==="approved").map(t=>t.tag)].join(" ").toLowerCase().includes(term));});
       pageSize=Number(pageSizeEl.value)||50;const pageCount=Math.max(1,Math.ceil(matched.length/pageSize));page=Math.min(page,pageCount);
       const start=(page-1)*pageSize,shown=matched.slice(start,start+pageSize);
       resultsEl.replaceChildren();countEl.textContent=matched.length?`Showing ${start+1}–${start+shown.length} of ${matched.length} ${matched.length===1?"website":"websites"}`:`0 websites`;
@@ -102,6 +103,7 @@
         const a=text(top,"a",linkLabel(item),"url");a.href=item.url;a.target="_blank";a.rel="noopener noreferrer";
         text(top,"span",item.category||"Other","badge");websiteMain.appendChild(top);
         const detail=text(websiteMain,"p",item.description||"No description provided.","detail");
+        siteTools.attachTags(websiteMain,item,tagsByLink.get(item.id)||[],load);
         const sourceVideos=sourceVideosByLink.get(item.id)||[item.video_id];
         const sourceList=text(websiteMain,"div","","source");
         for(const [index,videoId] of sourceVideos.entries()){if(index)sourceList.append(" · ");const source=text(sourceList,"a",sourceVideos.length>1?`Source video ${index+1} ↗`:"Watch source video ↗","source");source.href=`https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;source.target="_blank";source.rel="noopener noreferrer";}
@@ -112,11 +114,12 @@
     async function load(){
       if(!window.supabase||!window.APP_SUPABASE_URL||!window.APP_SUPABASE_PUBLIC_KEY){countEl.textContent="Supabase configuration is missing.";return;}
       try{
-        rows=[];comments=new Map();sourceVideosByLink=new Map();
+        rows=[];comments=new Map();tagsByLink=new Map();sourceVideosByLink=new Map();
         const db=window.supabase.createClient(window.APP_SUPABASE_URL,window.APP_SUPABASE_PUBLIC_KEY),size=1000;
         if(!siteTools){siteTools=window.createSiteTools(db);document.addEventListener("site-editor-change",render);}
         await siteTools.ready;
         for(let from=0;;from+=size){const {data,error}=await db.from("links").select("id,video_id,url,domain,description,category,created_at").order("created_at",{ascending:false}).range(from,from+size-1);if(error)throw error;rows.push(...data);if(data.length<size)break;}
+        tagsByLink=await siteTools.loadTags(rows);
         comments=await siteTools.loadComments(rows,"link");
         for(const item of rows)sourceVideosByLink.set(item.id,[item.video_id]);
         const linkIds=rows.map(item=>item.id);
@@ -125,10 +128,14 @@
         categoryCards.replaceChildren();filterEl.replaceChildren();const all=document.createElement("option");all.value="";all.textContent="All categories";filterEl.appendChild(all);
         for(const [name,n] of [...counts].sort((a,b)=>a[0].localeCompare(b[0]))){const option=document.createElement("option");option.value=name;option.textContent=name;filterEl.appendChild(option);
           const box=document.createElement("a");box.className="category-card";box.href=`./category.html?type=websites&category=${encodeURIComponent(name)}`;text(box,"strong",name);text(box,"small",`${n} ${n===1?"website":"websites"} · ${descriptions[name]||"Browse this category"}`);categoryCards.appendChild(box);}
+        const tagCounts=new Map();for(const item of rows)for(const entry of tagsByLink.get(item.id)||[])if(entry.status==="approved")tagCounts.set(entry.tag,(tagCounts.get(entry.tag)||0)+1);
+        tagFilterEl.replaceChildren();const allTags=document.createElement("option");allTags.value="";allTags.textContent="All tags";tagFilterEl.appendChild(allTags);
+        for(const [name,n] of [...tagCounts].sort((a,b)=>a[0].localeCompare(b[0]))){const option=document.createElement("option");option.value=name;option.textContent=`${name} (${n})`;tagFilterEl.appendChild(option);}
+        const selectedTag=new URLSearchParams(location.search).get("tag");if(selectedTag&&tagCounts.has(selectedTag))tagFilterEl.value=selectedTag;
         if(!counts.size)text(categoryCards,"div","Categories will appear after website links are collected.","message");render();
       }catch(error){console.error(error);countEl.textContent="Could not load websites. Check the Supabase URL, public key, table grants, and RLS policy.";categoryCards.replaceChildren();resultsEl.replaceChildren();text(resultsEl,"div","Supabase could not return the links table.","message");}
     }
-    searchEl.addEventListener("input",()=>{page=1;render();});filterEl.addEventListener("change",()=>{page=1;render();});pageSizeEl.addEventListener("change",()=>{page=1;render();});load();
+    searchEl.addEventListener("input",()=>{page=1;render();});filterEl.addEventListener("change",()=>{page=1;render();});tagFilterEl.addEventListener("change",()=>{page=1;render();});pageSizeEl.addEventListener("change",()=>{page=1;render();});load();
   </script>
 </body>
 </html>

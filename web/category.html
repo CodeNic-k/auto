@@ -70,7 +70,7 @@
     const intro = document.getElementById("intro"), countEl = document.getElementById("count");
     const resultsEl = document.getElementById("results"), searchEl = document.getElementById("search");
     const paginationEl = document.getElementById("pagination"), pageSizeEl = document.getElementById("page-size");
-    let rows = [], comments = new Map();
+    let rows = [], comments = new Map(), tagsByLink = new Map();
     let siteTools, page = 1, pageSize = 50;
     label.textContent = isNotes ? "Notes category" : "Website category";
     heading.textContent = category || "Category not selected";
@@ -110,7 +110,7 @@
     function render() {
       pageSize = Number(pageSizeEl.value) || 50;
       const term = searchEl.value.trim().toLowerCase();
-      const matched = rows.filter(x => !term || [x.url, x.domain, x.description, x.title, x.detail, x.category].join(" ").toLowerCase().includes(term));
+      const matched = rows.filter(x => !term || [x.url, x.domain, x.description, x.title, x.detail, x.category, ...(tagsByLink.get(x.id) || []).filter(t => t.status === "approved").map(t => t.tag)].join(" ").toLowerCase().includes(term));
       const pageCount = Math.max(1, Math.ceil(matched.length / pageSize));
       page = Math.min(page, pageCount);
       const start = (page - 1) * pageSize, shown = matched.slice(start, start + pageSize);
@@ -125,6 +125,7 @@
         else { const a = text(top, "a", linkLabel(item), "url"); a.href = item.url; a.target = "_blank"; a.rel = "noopener noreferrer"; }
         text(top, "span", item.category || "Other", "badge"); main.appendChild(top);
         const detail = text(main, "p", isNotes ? item.detail : (item.description || "No description provided."), "detail");
+        if (!isNotes) siteTools.attachTags(main, item, tagsByLink.get(item.id) || [], load);
         const source = text(main, "a", "Watch source video", "source");
         source.href = `https://www.youtube.com/watch?v=${encodeURIComponent(item.video_id)}`; source.target = "_blank"; source.rel = "noopener noreferrer";
         siteTools.attach(main, item, isNotes ? "note" : "link", detail, comments.get(`${isNotes ? "note" : "link"}:${item.id}`) || [], load);
@@ -136,7 +137,7 @@
       if (!category || !["notes", "websites"].includes(kind)) { countEl.textContent = "This category link is incomplete."; text(resultsEl, "div", "Open a category card from the Websites or Notes page.", "message"); return; }
       if (!window.supabase || !window.APP_SUPABASE_URL || !window.APP_SUPABASE_PUBLIC_KEY) { countEl.textContent = "Supabase configuration is missing."; return; }
       try {
-        rows = []; comments = new Map();
+        rows = []; comments = new Map(); tagsByLink = new Map();
         const db = window.supabase.createClient(window.APP_SUPABASE_URL, window.APP_SUPABASE_PUBLIC_KEY);
         const columns = isNotes ? "id,video_id,title,detail,category,created_at" : "id,video_id,url,domain,description,category,created_at";
         const size = 1000;
@@ -147,6 +148,7 @@
           if (error) throw error; rows.push(...data); if (data.length < size) break;
         }
         comments = await siteTools.loadComments(rows, isNotes ? "note" : "link");
+        if (!isNotes) tagsByLink = await siteTools.loadTags(rows);
         render();
       } catch (error) {
         console.error(error); countEl.textContent = `Could not load this ${isNotes ? "notes" : "website"} category.`;
