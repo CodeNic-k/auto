@@ -51,15 +51,19 @@ content refresh migration:
    and the remaining global duplicate count.
 
 6. [`supabase/website_tags.sql`](supabase/website_tags.sql) adds multiple tags per website,
-   public tag suggestions, and editor approval. It depends on the collaboration and global
-   website dedup migrations. Run it after `normalize_website_urls.sql`.
+   public tag suggestions, editor approval, and a preferred-label map for common tag variants.
+   It depends on the collaboration and global website dedup migrations. Run it after
+   `normalize_website_urls.sql`.
 
-After deploying the updated worker and applying `website_tags.sql`, run
-[`supabase/requeue_all_existing_content.sql`](supabase/requeue_all_existing_content.sql)
-to reprocess existing websites and generate their initial tags. The worker preserves
-approved and pending user tags while adding newly generated tags. Visitors can suggest tags;
-allowlisted editors can approve or reject suggestions from the website cards. Approved tags
-are searchable and filterable alongside website address, description, and category.
+After deploying the updated worker and reapplying `website_tags.sql`, run
+[`supabase/requeue_tag_quality_and_empty_content.sql`](supabase/requeue_tag_quality_and_empty_content.sql).
+It reprocesses existing website sources to replace old AI tag sets with up to three shared
+functional tags, and retries completed Shorts that have no website links or no saved notes.
+User-added tags stay intact. Visitors can suggest tags; allowlisted editors can approve or
+reject suggestions from the website cards. Approved tags are searchable and filterable
+alongside website address, description, and category.
+After the worker finishes, run [`supabase/check_website_tag_coverage.sql`](supabase/check_website_tag_coverage.sql).
+It lists any website that still has no approved tag.
 
 Existing links and notes remain visible until each video's new result is saved.
 

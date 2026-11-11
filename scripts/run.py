@@ -84,9 +84,15 @@ random facts with no practical or explanatory value, vague commentary, pure prom
 or a video that does not teach a clear takeaway. When there is no solid, useful takeaway,
 return notes: []. Never make up steps or claims to fill space.
 
-For every website, add 2–6 concise topic/use-case tags based only on the demonstrated site
-and description. Do not invent features or use vague tags such as "website". Return tags
-as an array of strings; do not repeat the category as a tag.
+For every website, return 1–3 tags. The first tag MUST name the website's clearest primary
+function so it groups this site with other sites that do the same job. Use concise, reusable
+function labels such as "image generation", "video editing", "website building", "flight
+tracking", or "browser game". Reuse the same label whenever the function is the same;
+prefer these exact forms over variants like "browser games" or "text to image" when the
+primary function is image generation. Add a second or third tag only for a clearly distinct
+function or workflow. Do not use the existing broad category, site/domain name, generic
+labels such as "AI tools" or "online platform", promotional language, or inferred features.
+Tags must be supported by the shown site and description. Never return an empty tags array.
 
 Use categories only from: {CATEGORY_TEXT}. Choose "How-to & workflows" when the main
 value is a sequence of actions, a search query, or a prompt-driven workflow; otherwise
@@ -121,8 +127,11 @@ search entry; keep it when the search itself is part of the useful workflow.
 
 For each entry, explain the site's purpose, the input/action demonstrated, and the
 expected result. Include exact prompts, search terms, model/resource names, and steps
-that are visible or spoken. Add 2–6 concise tags for the demonstrated topic and use case;
-do not invent features or use vague tags. Use categories only from: {CATEGORY_TEXT}.
+that are visible or spoken. Return 1–3 tags: first the primary function, then at most two
+distinct workflows. Reuse concise function labels across similar sites (for example,
+"image generation", "video editing", "website building", "flight tracking", "browser game").
+Do not repeat the category, domain, or generic terms. Never leave tags empty. Use categories
+only from: {CATEGORY_TEXT}.
 """.strip()
 NOTES_PROMPT = f"""
 Watch the full YouTube video, including spoken audio and readable on-screen text. Return
@@ -693,8 +702,43 @@ def normalize_url(raw_url):
     return cleaned, parts.hostname.lower().removeprefix("www.")
 
 
-def normalize_tags(raw_tags):
-    """Validate and deduplicate model-suggested website tags."""
+TAG_ALIASES = {
+    "browser games": "browser game",
+    "no code": "no-code",
+    "no-code tools": "no-code",
+    "image generator": "image generation",
+    "image generators": "image generation",
+    "ai art": "image generation",
+    "ai image generation": "image generation",
+    "ai image generator": "image generation",
+    "text to image": "image generation",
+    "text-to-image": "image generation",
+    "text-to-image generation": "image generation",
+    "video generator": "video generation",
+    "video generators": "video generation",
+    "text to video": "video generation",
+    "text-to-video": "video generation",
+    "text-to-video generation": "video generation",
+    "website builder": "website building",
+    "website builders": "website building",
+    "website generator": "website building",
+    "tabletop rpg": "tabletop role-playing",
+    "tabletop role playing": "tabletop role-playing",
+    "dnd": "tabletop role-playing",
+    "d&d": "tabletop role-playing",
+    "3d modelling": "3d modeling",
+}
+GENERIC_TAGS = {
+    "ai", "ai tools", "app", "apps", "business", "design", "developer tools",
+    "dev tools", "entertainment", "free resources", "generative ai", "learning",
+    "online platform", "online tools", "other", "platform", "privacy/security",
+    "productivity", "software", "technology", "tool", "tools", "useful website",
+    "website", "websites",
+}
+
+
+def normalize_tags(raw_tags, category=None):
+    """Return at most three reusable, specific function tags in canonical form."""
     if not isinstance(raw_tags, list):
         return []
     tags = []
@@ -702,14 +746,17 @@ def normalize_tags(raw_tags):
     for raw_tag in raw_tags:
         if not isinstance(raw_tag, str):
             continue
-        tag = re.sub(r"\s+", " ", raw_tag).strip()
+        tag = re.sub(r"\s+", " ", raw_tag).strip().casefold()
         if not 2 <= len(tag) <= 40 or not re.fullmatch(r"[\w][\w &.+-]*", tag, re.UNICODE):
+            continue
+        tag = TAG_ALIASES.get(tag, tag)
+        if tag in GENERIC_TAGS or (category and tag == category.strip().casefold()):
             continue
         key = tag.casefold()
         if key not in seen:
             seen.add(key)
             tags.append(tag)
-        if len(tags) == 8:
+        if len(tags) == 3:
             break
     return tags
 
@@ -887,15 +934,17 @@ def save_links(video_id, results):
         candidate = {
             "url": url, "domain": domain,
             "description": description.strip(), "category": category,
-            "tags": normalize_tags(result.get("tags", [])),
+            "tags": normalize_tags(result.get("tags", []), category),
         }
+        if not candidate["tags"]:
+            raise ValueError(f"Website {domain} needs at least one specific functional tag")
         existing = rows_by_url.get(url)
         if existing is None or len(candidate["description"]) > len(existing["description"]):
             if existing:
-                candidate["tags"] = normalize_tags(existing["tags"] + candidate["tags"])
+                candidate["tags"] = normalize_tags(existing["tags"] + candidate["tags"], category)
             rows_by_url[url] = candidate
         elif existing:
-            existing["tags"] = normalize_tags(existing["tags"] + candidate["tags"])
+            existing["tags"] = normalize_tags(existing["tags"] + candidate["tags"], category)
     # Remove a Google search only when its meaningful query words all identify
     # another URL's host/path from this same video. Distinct search workflows
     # and unrelated website URLs are retained.

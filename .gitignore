@@ -1,4 +1,9 @@
 .env.local
 supabase/
+!supabase/
+supabase/*
+!supabase/website_tags.sql
+!supabase/requeue_tag_quality_and_empty_content.sql
+!supabase/check_website_tag_coverage.sql
 
 
